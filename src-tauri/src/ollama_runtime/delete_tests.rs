@@ -89,8 +89,15 @@ fn an_unused_version_is_deleted_and_reports_the_freed_bytes() {
         }
     );
     assert!(!old.exists());
-    assert!(current.join("ollama.exe").is_file(), "the other version stays");
-    assert!(dot_entries(root.path()).is_empty(), "no leftover folder: {:?}", dot_entries(root.path()));
+    assert!(
+        current.join("ollama.exe").is_file(),
+        "the other version stays"
+    );
+    assert!(
+        dot_entries(root.path()).is_empty(),
+        "no leftover folder: {:?}",
+        dot_entries(root.path())
+    );
     // and it is really gone from the list the UI builds from the disk
     assert!(!scan_installed_runtime_versions(root.path()).contains_key("0.30.4"));
 }
@@ -115,7 +122,10 @@ fn the_version_the_server_reports_is_never_deleted() {
 
     assert!(detail.contains("running"), "{}", detail);
     assert!(dir.join("ollama.exe").is_file(), "nothing was touched");
-    assert_eq!(fs::read(dir.join("lib").join("ggml.dll")).unwrap(), b"1234567");
+    assert_eq!(
+        fs::read(dir.join("lib").join("ggml.dll")).unwrap(),
+        b"1234567"
+    );
 }
 
 #[test]
@@ -158,7 +168,11 @@ fn a_recorded_path_inside_the_folder_blocks_it_whatever_the_case_and_separators(
 
     let detail = refusal(delete_runtime_version_in(&ctx, "0.30.4"));
 
-    assert!(detail.contains("managed Ollama process runs from"), "{}", detail);
+    assert!(
+        detail.contains("managed Ollama process runs from"),
+        "{}",
+        detail
+    );
     assert!(dir.join("ollama.exe").is_file());
 }
 
@@ -188,7 +202,11 @@ fn the_selected_target_is_never_deleted_and_the_reason_says_what_to_do() {
     let detail = refusal(delete_runtime_version_in(&ctx, "0.30.4"));
 
     assert!(detail.contains("selected target"), "{}", detail);
-    assert!(detail.contains("Select another version first"), "{}", detail);
+    assert!(
+        detail.contains("Select another version first"),
+        "{}",
+        detail
+    );
     assert!(dir.join("ollama.exe").is_file());
 }
 
@@ -216,10 +234,18 @@ fn names_that_are_not_plain_versions_are_rejected_before_any_path_is_built() {
         &"9".repeat(40),
     ] {
         let answer = delete_runtime_version_in(&context(root.path()), name);
-        assert!(answer.is_err(), "{:?} must be rejected, got {:?}", name, answer);
+        assert!(
+            answer.is_err(),
+            "{:?} must be rejected, got {:?}",
+            name,
+            answer
+        );
     }
     assert!(root.path().join("0.30.4").join("ollama.exe").is_file());
-    assert_eq!(fs::read_to_string(outside.path().join("keep.txt")).unwrap(), "keep");
+    assert_eq!(
+        fs::read_to_string(outside.path().join("keep.txt")).unwrap(),
+        "keep"
+    );
 }
 
 #[test]
@@ -292,7 +318,12 @@ fn junction(link: &Path, target: &Path) {
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .expect("run mklink");
-    assert!(status.success(), "mklink /J {} {}", link.display(), target.display());
+    assert!(
+        status.success(),
+        "mklink /J {} {}",
+        link.display(),
+        target.display()
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -309,9 +340,15 @@ fn a_junction_inside_the_folder_is_removed_as_a_link_and_its_target_survives() {
     let result = delete_runtime_version_in(&context(root.path()), "0.30.4").unwrap();
 
     assert!(result.deleted, "{:?}", result);
-    assert_eq!(result.freed_bytes, 12, "the linked folder is not part of the size");
+    assert_eq!(
+        result.freed_bytes, 12,
+        "the linked folder is not part of the size"
+    );
     assert!(!dir.exists());
-    assert_eq!(fs::read_to_string(outside.path().join("important.txt")).unwrap(), "keep me");
+    assert_eq!(
+        fs::read_to_string(outside.path().join("important.txt")).unwrap(),
+        "keep me"
+    );
     assert_eq!(
         fs::read_to_string(outside.path().join("deep").join("more.txt")).unwrap(),
         "and me"
@@ -330,7 +367,10 @@ fn a_version_folder_that_is_itself_a_junction_is_refused_and_its_target_survives
 
     assert!(detail.contains("not a plain folder"), "{}", detail);
     assert!(elsewhere.path().join("real").join("ollama.exe").is_file());
-    assert!(root.path().join("0.30.4").exists(), "the link is untouched too");
+    assert!(
+        root.path().join("0.30.4").exists(),
+        "the link is untouched too"
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -351,7 +391,11 @@ fn a_locked_file_never_leaves_a_half_deleted_runtime_behind() {
 
     let started = Instant::now();
     let result = delete_runtime_version_in(&context(root.path()), "0.30.4").unwrap();
-    println!("locked-file delete answered {:?} after {:?}", result, started.elapsed());
+    println!(
+        "locked-file delete answered {:?} after {:?}",
+        result,
+        started.elapsed()
+    );
 
     if result.deleted {
         assert!(!dir.exists(), "deleted means gone from the list");
@@ -372,10 +416,18 @@ fn a_locked_file_never_leaves_a_half_deleted_runtime_behind() {
     drop(held);
     cleanup_stale_runtime_dirs_older_than(root.path(), Duration::from_secs(0));
     if dir.exists() {
-        assert!(delete_runtime_version_in(&context(root.path()), "0.30.4").unwrap().deleted);
+        assert!(
+            delete_runtime_version_in(&context(root.path()), "0.30.4")
+                .unwrap()
+                .deleted
+        );
     }
     assert!(!dir.exists());
-    assert!(dot_entries(root.path()).is_empty(), "{:?}", dot_entries(root.path()));
+    assert!(
+        dot_entries(root.path()).is_empty(),
+        "{:?}",
+        dot_entries(root.path())
+    );
 }
 
 #[test]
@@ -422,5 +474,8 @@ fn the_size_ignores_links_and_counts_nested_files() {
     fs::create_dir_all(dir.join("a").join("b")).unwrap();
     fs::write(dir.join("a").join("b").join("c.bin"), vec![0u8; 100]).unwrap();
     assert_eq!(directory_size_without_links(&dir), 112);
-    assert_eq!(directory_size_without_links(&root.path().join("nothing")), 0);
+    assert_eq!(
+        directory_size_without_links(&root.path().join("nothing")),
+        0
+    );
 }

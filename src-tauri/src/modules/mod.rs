@@ -133,7 +133,9 @@ mod tests {
     fn drops_removed_analysis_settings() {
         let mut settings = ModuleSettings::default();
         settings.enabled_modules.insert("analysis".to_string());
-        settings.enabled_modules.insert("assistant_core".to_string());
+        settings
+            .enabled_modules
+            .insert("assistant_core".to_string());
         settings.consented_permissions.insert(
             "analysis".to_string(),
             HashSet::from(["filesystem_history".to_string()]),
@@ -179,9 +181,10 @@ mod tests {
         ];
         for (module_id, permission) in removed {
             settings.enabled_modules.insert(module_id.to_string());
-            settings
-                .consented_permissions
-                .insert(module_id.to_string(), HashSet::from([permission.to_string()]));
+            settings.consented_permissions.insert(
+                module_id.to_string(),
+                HashSet::from([permission.to_string()]),
+            );
             settings.module_overrides.insert(
                 format!("{module_id}.last_error"),
                 serde_json::Value::String("stale".to_string()),

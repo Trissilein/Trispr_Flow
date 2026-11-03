@@ -252,7 +252,6 @@ mod tests {
 
         assert!(items.iter().all(|item| item.id != "module_opus"));
     }
-
 }
 
 pub(crate) fn run_dependency_preflight(app: &AppHandle) {

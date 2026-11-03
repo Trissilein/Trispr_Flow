@@ -2528,8 +2528,14 @@ mod tests {
 
     #[test]
     fn a_lone_closing_or_opening_tag_is_removed() {
-        assert_eq!(strip_transcript_wrapper_tags("Text.\n</transcript>"), "Text.");
-        assert_eq!(strip_transcript_wrapper_tags("<transcript>\nText."), "Text.");
+        assert_eq!(
+            strip_transcript_wrapper_tags("Text.\n</transcript>"),
+            "Text."
+        );
+        assert_eq!(
+            strip_transcript_wrapper_tags("<transcript>\nText."),
+            "Text."
+        );
         assert_eq!(strip_transcript_wrapper_tags("<transcript>Text."), "Text.");
     }
 
@@ -2550,7 +2556,10 @@ mod tests {
         // closing tag cut off at the end of the output
         assert_eq!(strip_transcript_wrapper_tags("Text.\n</transcr"), "Text.");
         assert_eq!(strip_transcript_wrapper_tags("Text.</transcript"), "Text.");
-        assert_eq!(strip_transcript_wrapper_tags("<transcript>\nText.\n</trans"), "Text.");
+        assert_eq!(
+            strip_transcript_wrapper_tags("<transcript>\nText.\n</trans"),
+            "Text."
+        );
     }
 
     #[test]
@@ -2592,8 +2601,18 @@ mod tests {
         ] {
             let sanitized =
                 sanitize_ollama_refinement_output(original, refined, &test_options(false));
-            assert!(!sanitized.contains("transcript>"), "{} -> {}", refined, sanitized);
-            assert!(sanitized.ends_with("Unterlagen."), "{} -> {}", refined, sanitized);
+            assert!(
+                !sanitized.contains("transcript>"),
+                "{} -> {}",
+                refined,
+                sanitized
+            );
+            assert!(
+                sanitized.ends_with("Unterlagen."),
+                "{} -> {}",
+                refined,
+                sanitized
+            );
         }
         assert_eq!(
             sanitize_ollama_refinement_output(
@@ -2615,7 +2634,11 @@ mod tests {
         // user text that merely mentions the word stays as dictated
         let mention = "das transcript ist fertig";
         assert_eq!(
-            sanitize_ollama_refinement_output(mention, "Das transcript ist fertig.", &test_options(false)),
+            sanitize_ollama_refinement_output(
+                mention,
+                "Das transcript ist fertig.",
+                &test_options(false)
+            ),
             "Das transcript ist fertig."
         );
     }
@@ -2765,11 +2788,7 @@ mod pull_stream_tests {
     fn consume<R: BufRead>(reader: R) -> (PullStreamEnd, u64, u64) {
         let mut logged = 0u64;
         let mut progressed = 0u64;
-        let end = consume_pull_stream(
-            reader,
-            &mut |_, _| logged += 1,
-            &mut |_| progressed += 1,
-        );
+        let end = consume_pull_stream(reader, &mut |_, _| logged += 1, &mut |_| progressed += 1);
         (end, logged, progressed)
     }
 
@@ -2787,7 +2806,10 @@ mod pull_stream_tests {
         let (end, logged, progressed) = consume(reader);
         assert_eq!(end, PullStreamEnd::Success { lines: 3 });
         assert_eq!(logged, 3, "every line is logged");
-        assert_eq!(progressed, 2, "the final success line is not a progress event");
+        assert_eq!(
+            progressed, 2,
+            "the final success line is not a progress event"
+        );
     }
 
     #[test]
@@ -2848,7 +2870,9 @@ mod pull_stream_tests {
     #[test]
     fn a_connection_that_breaks_mid_pull_ends_the_pull_instead_of_spinning() {
         let (server, _) = broken_pull_server();
-        let response = ureq::get(&format!("{}/api/pull", server.base_url)).call().unwrap();
+        let response = ureq::get(&format!("{}/api/pull", server.base_url))
+            .call()
+            .unwrap();
         let started = Instant::now();
 
         let mut seen = 0u64;
@@ -2860,13 +2884,24 @@ mod pull_stream_tests {
 
         match end {
             PullStreamEnd::Broken { error, lines } => {
-                assert!(lines > 10 && lines < 100, "the complete lines before the cut: {}", lines);
+                assert!(
+                    lines > 10 && lines < 100,
+                    "the complete lines before the cut: {}",
+                    lines
+                );
                 assert!(!error.is_empty());
                 assert_eq!(seen, lines);
             }
-            other => panic!("a broken connection must end the pull as Broken: {:?}", other),
+            other => panic!(
+                "a broken connection must end the pull as Broken: {:?}",
+                other
+            ),
         }
-        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
@@ -2876,7 +2911,9 @@ mod pull_stream_tests {
         // `continue`, which turned this into a busy loop (measured: 100,000 errors in 0.13 s)
         // that kept the model "pull in progress" until the app was restarted.
         let (server, _) = broken_pull_server();
-        let response = ureq::get(&format!("{}/api/pull", server.base_url)).call().unwrap();
+        let response = ureq::get(&format!("{}/api/pull", server.base_url))
+            .call()
+            .unwrap();
         let buffered = std::io::BufReader::new(response.into_reader());
         let mut errors = 0usize;
         let mut calls = 0usize;

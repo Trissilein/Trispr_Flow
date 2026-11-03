@@ -106,12 +106,12 @@ use crate::transcription::{
     stop_transcribe_monitor_and_release_whisper, toggle_transcribe_state,
 };
 pub(crate) use ai_fallback::commands::{
-    check_ollama_model_updates, delete_ollama_model, detect_ollama_runtime, download_ollama_runtime,
-    fetch_ollama_models_with_size, fetch_ollama_online_versions, get_ollama_model_info,
-    import_ollama_model_from_file, install_ollama_runtime, list_ollama_runtime_versions,
-    ping_refinement_model, pull_ollama_model, purge_gpu_memory, refine_transcript,
-    start_ollama_runtime, stop_ollama_runtime, unload_ollama_model, unload_ollama_model_impl,
-    verify_ollama_runtime, warmup_ollama_model, warmup_ollama_model_impl,
+    check_ollama_model_updates, delete_ollama_model, detect_ollama_runtime,
+    download_ollama_runtime, fetch_ollama_models_with_size, fetch_ollama_online_versions,
+    get_ollama_model_info, import_ollama_model_from_file, install_ollama_runtime,
+    list_ollama_runtime_versions, ping_refinement_model, pull_ollama_model, purge_gpu_memory,
+    refine_transcript, start_ollama_runtime, stop_ollama_runtime, unload_ollama_model,
+    unload_ollama_model_impl, verify_ollama_runtime, warmup_ollama_model, warmup_ollama_model_impl,
 };
 pub(crate) use ai_fallback::model_info::{get_ollama_model_details, open_model_page};
 pub(crate) use ai_fallback::model_verify::{

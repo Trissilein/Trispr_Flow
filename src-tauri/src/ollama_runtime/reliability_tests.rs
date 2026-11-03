@@ -129,7 +129,14 @@ fn waits_are_written_the_way_a_person_reads_them() {
     assert_eq!(format_wait(754), "13 min");
     assert_eq!(format_wait(3600), "1 h");
     assert_eq!(format_wait(3600 + 5 * 60), "1 h 5 min");
-    assert_eq!(format_wait(u64::MAX), format!("{} h {} min", u64::MAX.div_ceil(60) / 60, u64::MAX.div_ceil(60) % 60));
+    assert_eq!(
+        format_wait(u64::MAX),
+        format!(
+            "{} h {} min",
+            u64::MAX.div_ceil(60) / 60,
+            u64::MAX.div_ceil(60) % 60
+        )
+    );
 }
 
 #[test]
@@ -151,7 +158,11 @@ fn an_unreachable_github_is_reported_with_advice_and_without_panic() {
     };
     assert!(error.contains("Could not reach GitHub"), "{}", error);
     assert!(error.contains("internet connection"), "{}", error);
-    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
@@ -174,9 +185,8 @@ fn a_rate_limit_names_the_wait_from_the_reset_header() {
 
 #[test]
 fn a_429_with_retry_after_names_that_wait() {
-    let server = MockServer::start(|_| {
-        MockReply::error(429, "slow down").with_header("Retry-After", "90")
-    });
+    let server =
+        MockServer::start(|_| MockReply::error(429, "slow down").with_header("Retry-After", "90"));
     let error = match fetch_online_catalog_from(&github_api(&server.base_url), &[]) {
         Ok(_) => panic!("rate limited"),
         Err(error) => error,
@@ -216,7 +226,11 @@ fn a_github_outage_is_described_as_such() {
         Ok(_) => panic!("outage"),
         Err(error) => error,
     };
-    assert!(error.contains("HTTP 503") && error.contains("Try again later"), "{}", error);
+    assert!(
+        error.contains("HTTP 503") && error.contains("Try again later"),
+        "{}",
+        error
+    );
 }
 
 #[test]
@@ -235,11 +249,17 @@ fn a_cut_off_tag_list_is_reported_as_unreadable() {
 fn broken_json_and_foreign_documents_are_not_a_release_list() {
     for (body, expect) in [
         ("<html>captive portal</html>", "could not be read"),
-        ("{\"message\":\"Not Found\",\"documentation_url\":\"x\"}", "Not Found"),
+        (
+            "{\"message\":\"Not Found\",\"documentation_url\":\"x\"}",
+            "Not Found",
+        ),
         ("{}", "unexpected answer"),
         ("[]", "no Ollama release tags"),
         ("[{\"nope\":1},{\"ref\":7}]", "no Ollama release tags"),
-        ("[{\"ref\":\"refs/tags/v0.1.32-rc1\"},{\"ref\":\"refs/tags/not-a-version\"}]", "no stable Ollama release"),
+        (
+            "[{\"ref\":\"refs/tags/v0.1.32-rc1\"},{\"ref\":\"refs/tags/not-a-version\"}]",
+            "no stable Ollama release",
+        ),
     ] {
         let body = body.to_string();
         let server = MockServer::start(move |_| MockReply::text(200, &body));
@@ -260,7 +280,11 @@ fn a_long_foreign_message_is_cut_on_a_character_boundary() {
         Ok(_) => panic!("not a list"),
         Err(error) => error,
     };
-    assert!(error.chars().filter(|c| *c == 'ä').count() == 160, "{}", error);
+    assert!(
+        error.chars().filter(|c| *c == 'ä').count() == 160,
+        "{}",
+        error
+    );
 }
 
 #[test]
@@ -286,7 +310,11 @@ fn a_catalog_where_every_release_lookup_is_rate_limited_is_an_error_not_a_list_o
         Err(error) => error,
     };
 
-    assert!(error.contains("rate limit") && error.contains("Try again in 10 min"), "{}", error);
+    assert!(
+        error.contains("rate limit") && error.contains("Try again in 10 min"),
+        "{}",
+        error
+    );
     assert_eq!(
         release_requests.load(AtomicOrdering::SeqCst),
         1,
@@ -325,14 +353,20 @@ fn a_partial_catalog_is_returned_but_never_cached() {
     assert!(versions[0].installable, "the resolved release stays usable");
     assert!(
         versions[1..].iter().all(|v| !v.installable
-            && v.installable_reason.as_deref().unwrap_or("").contains("rate limit")),
+            && v.installable_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("rate limit")),
         "{:?}",
         versions
             .iter()
             .map(|v| (&v.version, &v.installable_reason))
             .collect::<Vec<_>>()
     );
-    assert!(!cache.exists(), "a list with gaps must not be served for 6 hours");
+    assert!(
+        !cache.exists(),
+        "a list with gaps must not be served for 6 hours"
+    );
 }
 
 #[test]
@@ -353,7 +387,10 @@ fn a_degraded_catalog_never_hides_the_pinned_version() {
             .find(|v| v.version == DEFAULT_RUNTIME_VERSION)
             .expect("the pinned version is always listed");
         assert!(pinned.installable && pinned.recommended && pinned.source == "pinned");
-        assert!(!versions.iter().any(|v| v.latest), "nothing is 'latest' without a catalog");
+        assert!(
+            !versions.iter().any(|v| v.latest),
+            "nothing is 'latest' without a catalog"
+        );
     }
 }
 
@@ -399,7 +436,10 @@ fn a_damaged_cache_file_is_treated_as_no_cache() {
     fs::remove_file(&path).unwrap();
     assert!(load_catalog_cache_at(&path).is_none());
     fs::create_dir(&path).unwrap();
-    assert!(load_catalog_cache_at(&path).is_none(), "a directory in its place");
+    assert!(
+        load_catalog_cache_at(&path).is_none(),
+        "a directory in its place"
+    );
 }
 
 #[test]
@@ -410,7 +450,11 @@ fn cache_entries_that_are_not_release_versions_are_dropped_on_load() {
     fs::write(&path, serde_json::to_string(&cache).unwrap()).unwrap();
     let loaded = load_catalog_cache_at(&path).expect("loads");
     assert_eq!(
-        loaded.versions.iter().map(|v| v.version.as_str()).collect::<Vec<_>>(),
+        loaded
+            .versions
+            .iter()
+            .map(|v| v.version.as_str())
+            .collect::<Vec<_>>(),
         vec!["0.40.13"]
     );
 }
@@ -419,22 +463,50 @@ fn cache_entries_that_are_not_release_versions_are_dropped_on_load() {
 fn freshness_rejects_empty_future_and_expired_caches() {
     let now = 10_000_000_000u64;
     let ttl = CATALOG_CACHE_TTL_MS;
-    assert!(catalog_cache_is_fresh(&cache_with(now - 1000, &["0.40.13"]), now, ttl));
+    assert!(catalog_cache_is_fresh(
+        &cache_with(now - 1000, &["0.40.13"]),
+        now,
+        ttl
+    ));
     // empty list: nothing to show, so it must not count as fresh
-    assert!(!catalog_cache_is_fresh(&cache_with(now - 1000, &[]), now, ttl));
+    assert!(!catalog_cache_is_fresh(
+        &cache_with(now - 1000, &[]),
+        now,
+        ttl
+    ));
     // expired
-    assert!(!catalog_cache_is_fresh(&cache_with(now - ttl, &["0.40.13"]), now, ttl));
+    assert!(!catalog_cache_is_fresh(
+        &cache_with(now - ttl, &["0.40.13"]),
+        now,
+        ttl
+    ));
     // small clock skew is tolerated, a cache from "the future" is not
-    assert!(catalog_cache_is_fresh(&cache_with(now + 60_000, &["0.40.13"]), now, ttl));
+    assert!(catalog_cache_is_fresh(
+        &cache_with(now + 60_000, &["0.40.13"]),
+        now,
+        ttl
+    ));
     assert!(!catalog_cache_is_fresh(
         &cache_with(now + CATALOG_CLOCK_SKEW_MS + 1, &["0.40.13"]),
         now,
         ttl
     ));
-    assert!(!catalog_cache_is_fresh(&cache_with(u64::MAX, &["0.40.13"]), now, ttl));
+    assert!(!catalog_cache_is_fresh(
+        &cache_with(u64::MAX, &["0.40.13"]),
+        now,
+        ttl
+    ));
     // arithmetic at the edges
-    assert!(!catalog_cache_is_fresh(&cache_with(0, &["0.40.13"]), u64::MAX, ttl));
-    assert!(catalog_cache_is_fresh(&cache_with(u64::MAX, &["0.40.13"]), u64::MAX, ttl));
+    assert!(!catalog_cache_is_fresh(
+        &cache_with(0, &["0.40.13"]),
+        u64::MAX,
+        ttl
+    ));
+    assert!(catalog_cache_is_fresh(
+        &cache_with(u64::MAX, &["0.40.13"]),
+        u64::MAX,
+        ttl
+    ));
 }
 
 #[test]
@@ -454,10 +526,17 @@ fn a_cache_from_the_future_does_not_block_refreshing() {
     )
     .expect("refresh");
 
-    assert_eq!(tag_requests.load(AtomicOrdering::SeqCst), 1, "GitHub was asked");
+    assert_eq!(
+        tag_requests.load(AtomicOrdering::SeqCst),
+        1,
+        "GitHub was asked"
+    );
     assert!(versions.iter().any(|v| v.version == "0.40.13"));
     let rewritten = load_catalog_cache_at(&path).expect("cache replaced");
-    assert!(rewritten.fetched_at_ms < u64::MAX / 2, "the poisoned stamp is gone");
+    assert!(
+        rewritten.fetched_at_ms < u64::MAX / 2,
+        "the poisoned stamp is gone"
+    );
 }
 
 #[test]
@@ -466,7 +545,11 @@ fn a_fresh_cache_needs_no_network_and_an_empty_one_does() {
     let scratch = Scratch::new("cache-fresh");
     let path = scratch.path().join("online-catalog.json");
     let now = crate::util::now_ms();
-    fs::write(&path, serde_json::to_string(&cache_with(now - 1000, &["0.40.13"])).unwrap()).unwrap();
+    fs::write(
+        &path,
+        serde_json::to_string(&cache_with(now - 1000, &["0.40.13"])).unwrap(),
+    )
+    .unwrap();
 
     let cached = refresh_online_catalog(&path, &github_api(&server.base_url), &[], false, now)
         .expect("from cache");
@@ -474,7 +557,11 @@ fn a_fresh_cache_needs_no_network_and_an_empty_one_does() {
     assert_eq!(tag_requests.load(AtomicOrdering::SeqCst), 0);
 
     // same stamp but an empty list: refreshed
-    fs::write(&path, serde_json::to_string(&cache_with(now - 1000, &[])).unwrap()).unwrap();
+    fs::write(
+        &path,
+        serde_json::to_string(&cache_with(now - 1000, &[])).unwrap(),
+    )
+    .unwrap();
     let fetched = refresh_online_catalog(&path, &github_api(&server.base_url), &[], false, now)
         .expect("fetched");
     assert!(fetched.len() > 1);
@@ -526,7 +613,10 @@ fn a_cache_that_cannot_be_written_does_not_fail_the_refresh() {
     );
 
     // and a cache directory that does not exist at all
-    let missing = scratch.path().join("no-such-dir").join("online-catalog.json");
+    let missing = scratch
+        .path()
+        .join("no-such-dir")
+        .join("online-catalog.json");
     assert!(refresh_online_catalog(
         &missing,
         &github_api(&server.base_url),
@@ -552,14 +642,25 @@ fn simultaneous_refreshes_cost_github_one_listing() {
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().expect("no panic")).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("no panic"))
+            .collect()
     });
 
-    assert!(results.iter().all(|r| r.as_ref().map(|v| v.len() > 1).unwrap_or(false)));
-    assert_eq!(tag_requests.load(AtomicOrdering::SeqCst), 1, "one listing for eight callers");
+    assert!(results
+        .iter()
+        .all(|r| r.as_ref().map(|v| v.len() > 1).unwrap_or(false)));
+    assert_eq!(
+        tag_requests.load(AtomicOrdering::SeqCst),
+        1,
+        "one listing for eight callers"
+    );
     assert!(release_requests.load(AtomicOrdering::SeqCst) <= CATALOG_MAX_MINOR_LINES);
     let first = &results[0].as_ref().unwrap();
-    assert!(results.iter().all(|r| r.as_ref().unwrap().len() == first.len()));
+    assert!(results
+        .iter()
+        .all(|r| r.as_ref().unwrap().len() == first.len()));
 }
 
 #[test]
@@ -580,12 +681,20 @@ fn installed_and_selected_versions_are_always_looked_up() {
     let (server, _, release_requests) = healthy_github();
     let versions = fetch_online_catalog_from(
         &github_api(&server.base_url),
-        &["0.20.2".to_string(), "v0.40.13".to_string(), "../x".to_string(), "".to_string()],
+        &[
+            "0.20.2".to_string(),
+            "v0.40.13".to_string(),
+            "../x".to_string(),
+            "".to_string(),
+        ],
     )
     .expect("catalog")
     .versions;
 
-    assert!(versions.iter().any(|v| v.version == "0.20.2"), "extra version resolved");
+    assert!(
+        versions.iter().any(|v| v.version == "0.20.2"),
+        "extra version resolved"
+    );
     assert_eq!(
         versions.iter().filter(|v| v.version == "0.40.13").count(),
         1,
@@ -601,9 +710,8 @@ fn installed_and_selected_versions_are_always_looked_up() {
 
 #[test]
 fn the_install_path_gets_the_same_helpful_rate_limit_text() {
-    let server = MockServer::start(|_| {
-        MockReply::error(429, "slow down").with_header("Retry-After", "30")
-    });
+    let server =
+        MockServer::start(|_| MockReply::error(429, "slow down").with_header("Retry-After", "30"));
     let error = fetch_online_manifest_from(&github_api(&server.base_url), "0.38.1")
         .expect_err("rate limited");
     assert!(
@@ -686,12 +794,21 @@ fn a_complete_download_is_verified_cached_and_reused_without_a_request() {
         ],
         "archive + sidecar, no .part"
     );
-    assert!(messages.iter().any(|m| m.contains("checksum verified")), "{:?}", messages);
+    assert!(
+        messages.iter().any(|m| m.contains("checksum verified")),
+        "{:?}",
+        messages
+    );
 
     // second call: the cached archive still matches, so no request is made
     let before = server.requests().len();
-    download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect("cached");
+    download(
+        &manifest,
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect("cached");
     assert_eq!(server.requests().len(), before);
 }
 
@@ -704,8 +821,13 @@ fn a_download_cut_off_mid_stream_leaves_nothing_behind() {
     let cache = Scratch::new("dl-cut");
     let manifest = manifest_for("9.9.2", &server.base_url, &body);
 
-    let error = download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect_err("half an archive must not pass");
+    let error = download(
+        &manifest,
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect_err("half an archive must not pass");
 
     assert!(
         error.contains("closed before the download finished")
@@ -734,10 +856,19 @@ fn a_connection_that_went_silent_ends_the_download_instead_of_hanging() {
     let manifest = manifest_for("9.9.3", &server.base_url, &body);
 
     let started = Instant::now();
-    let error = download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_millis(700))
-        .expect_err("a dead connection must end");
+    let error = download(
+        &manifest,
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_millis(700),
+    )
+    .expect_err("a dead connection must end");
 
-    assert!(started.elapsed() < Duration::from_secs(6), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "{:?}",
+        started.elapsed()
+    );
     assert!(error.contains("stalled"), "{}", error);
     assert_eq!(only_entries(cache.path()), Vec::<String>::new());
 }
@@ -751,11 +882,20 @@ fn a_wrong_checksum_removes_the_archive_and_says_so() {
     let mut manifest = manifest_for("9.9.4", &server.base_url, &body);
     manifest.sha256 = "0".repeat(64);
 
-    let error = download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect_err("checksum mismatch");
+    let error = download(
+        &manifest,
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect_err("checksum mismatch");
 
     assert!(error.contains("checksum mismatch"), "{}", error);
-    assert!(error.contains(&"0".repeat(64)) && error.contains(&sha_of(body.as_bytes())), "{}", error);
+    assert!(
+        error.contains(&"0".repeat(64)) && error.contains(&sha_of(body.as_bytes())),
+        "{}",
+        error
+    );
     assert_eq!(only_entries(cache.path()), Vec::<String>::new());
 }
 
@@ -766,11 +906,20 @@ fn a_cached_archive_with_other_content_is_replaced_not_trusted() {
     let server = MockServer::start(move |_| MockReply::text(200, &served));
     let cache = Scratch::new("dl-badcache");
     let manifest = manifest_for("9.9.5", &server.base_url, &body);
-    fs::write(cache.path().join("ollama-windows-amd64-v9.9.5.zip"), b"tampered").unwrap();
+    fs::write(
+        cache.path().join("ollama-windows-amd64-v9.9.5.zip"),
+        b"tampered",
+    )
+    .unwrap();
     fs::write(cache.path().join("ollama-windows-amd64-v9.9.5.json"), b"{}").unwrap();
 
-    let path = download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect("redownloaded");
+    let path = download(
+        &manifest,
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect("redownloaded");
 
     assert_eq!(fs::read(path).unwrap(), body.as_bytes());
 }
@@ -789,28 +938,52 @@ fn a_leftover_part_file_from_a_killed_download_is_simply_overwritten() {
     )
     .unwrap();
 
-    let path = download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect("download over a stale .part");
+    let path = download(
+        &manifest,
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect("download over a stale .part");
 
     assert_eq!(fs::read(path).unwrap(), body.as_bytes());
-    assert!(!only_entries(cache.path()).iter().any(|n| n.ends_with(".part")));
+    assert!(!only_entries(cache.path())
+        .iter()
+        .any(|n| n.ends_with(".part")));
 }
 
 #[test]
 fn stale_part_files_are_swept_young_ones_and_archives_stay() {
     let cache = Scratch::new("dl-sweep");
-    fs::write(cache.path().join("ollama-windows-amd64-v1.0.0.zip.part"), b"x").unwrap();
-    fs::write(cache.path().join("ollama-windows-amd64-v1.0.0.zip"), b"keep").unwrap();
+    fs::write(
+        cache.path().join("ollama-windows-amd64-v1.0.0.zip.part"),
+        b"x",
+    )
+    .unwrap();
+    fs::write(
+        cache.path().join("ollama-windows-amd64-v1.0.0.zip"),
+        b"keep",
+    )
+    .unwrap();
     fs::write(cache.path().join("online-catalog.json"), b"keep").unwrap();
 
     cleanup_stale_download_parts(cache.path(), Duration::from_secs(3600));
-    assert!(cache.path().join("ollama-windows-amd64-v1.0.0.zip.part").exists(), "young");
+    assert!(
+        cache
+            .path()
+            .join("ollama-windows-amd64-v1.0.0.zip.part")
+            .exists(),
+        "young"
+    );
 
     std::thread::sleep(Duration::from_millis(50));
     cleanup_stale_download_parts(cache.path(), Duration::from_millis(10));
     assert_eq!(
         only_entries(cache.path()),
-        vec!["ollama-windows-amd64-v1.0.0.zip".to_string(), "online-catalog.json".to_string()]
+        vec![
+            "ollama-windows-amd64-v1.0.0.zip".to_string(),
+            "online-catalog.json".to_string()
+        ]
     );
 }
 
@@ -820,13 +993,31 @@ fn download_server_failures_are_described() {
     let body = archive_body();
 
     let gone = MockServer::start(|_| MockReply::error(404, "no such asset"));
-    let error = download(&manifest_for("9.9.7", &gone.base_url, &body), cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect_err("404");
-    assert!(error.contains("HTTP 404") && error.contains("removed"), "{}", error);
+    let error = download(
+        &manifest_for("9.9.7", &gone.base_url, &body),
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect_err("404");
+    assert!(
+        error.contains("HTTP 404") && error.contains("removed"),
+        "{}",
+        error
+    );
 
-    let error = download(&manifest_for("9.9.8", "http://127.0.0.1:1", &body), cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect_err("nothing there");
-    assert!(error.contains("could not reach the download server"), "{}", error);
+    let error = download(
+        &manifest_for("9.9.8", "http://127.0.0.1:1", &body),
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect_err("nothing there");
+    assert!(
+        error.contains("could not reach the download server"),
+        "{}",
+        error
+    );
     assert_eq!(only_entries(cache.path()), Vec::<String>::new());
 }
 
@@ -888,13 +1079,22 @@ impl Write for FullDisk {
 fn a_full_disk_is_reported_as_such_everywhere_bytes_are_written() {
     let data = vec![1u8; 600_000];
     let mut reader = std::io::Cursor::new(data.clone());
-    let error = match stream_download(&mut reader, &mut FullDisk { room: 300_000 }, u64::MAX, &mut |_| {}) {
+    let error = match stream_download(
+        &mut reader,
+        &mut FullDisk { room: 300_000 },
+        u64::MAX,
+        &mut |_| {},
+    ) {
         Err(StreamError::Write(e)) => e,
         _ => panic!("the write failure must surface as a write error"),
     };
     assert!(is_disk_full(&error));
     let message = describe_write_error("write the runtime archive to disk", &error);
-    assert!(message.contains("Not enough free disk space"), "{}", message);
+    assert!(
+        message.contains("Not enough free disk space"),
+        "{}",
+        message
+    );
 
     // extraction copies through the same kind of writer
     let mut reader = std::io::Cursor::new(data);
@@ -906,7 +1106,9 @@ fn a_full_disk_is_reported_as_such_everywhere_bytes_are_written() {
     let other = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
     assert!(!is_disk_full(&other));
     assert!(describe_write_error("create the download file", &other).contains("access denied"));
-    assert!(is_disk_full(&std::io::Error::from(std::io::ErrorKind::StorageFull)));
+    assert!(is_disk_full(&std::io::Error::from(
+        std::io::ErrorKind::StorageFull
+    )));
 }
 
 #[test]
@@ -920,8 +1122,13 @@ fn a_download_that_cannot_create_its_file_fails_cleanly() {
     // the cache "directory" is a file: creating `.zip.part` inside it must fail without panic
     let not_a_dir = scratch.path().join("cache");
     fs::write(&not_a_dir, b"i am a file").unwrap();
-    let error = download(&manifest, &not_a_dir, MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect_err("no place to write");
+    let error = download(
+        &manifest,
+        &not_a_dir,
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect_err("no place to write");
     assert!(error.contains("download file"), "{}", error);
 }
 
@@ -936,26 +1143,54 @@ fn two_downloads_of_one_version_never_share_a_part_file() {
     let manifest = manifest_for("9.8.2", &server.base_url, &body);
 
     let results: Vec<Result<PathBuf, String>> = std::thread::scope(|scope| {
-        let first = scope.spawn(|| download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5)));
+        let first = scope.spawn(|| {
+            download(
+                &manifest,
+                cache.path(),
+                MAX_RUNTIME_ARCHIVE_BYTES,
+                Duration::from_secs(5),
+            )
+        });
         std::thread::sleep(Duration::from_millis(200));
-        let second = scope.spawn(|| download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5)));
+        let second = scope.spawn(|| {
+            download(
+                &manifest,
+                cache.path(),
+                MAX_RUNTIME_ARCHIVE_BYTES,
+                Duration::from_secs(5),
+            )
+        });
         vec![first.join().unwrap(), second.join().unwrap()]
     });
 
-    assert!(results[0].is_ok(), "the first download completes: {:?}", results[0]);
+    assert!(
+        results[0].is_ok(),
+        "the first download completes: {:?}",
+        results[0]
+    );
     let refusal = results[1].as_ref().expect_err("the second must be refused");
     assert!(refusal.contains("already running"), "{}", refusal);
-    assert_eq!(fs::read(results[0].as_ref().unwrap()).unwrap(), body.as_bytes());
+    assert_eq!(
+        fs::read(results[0].as_ref().unwrap()).unwrap(),
+        body.as_bytes()
+    );
     // the lock is released afterwards
-    download(&manifest, cache.path(), MAX_RUNTIME_ARCHIVE_BYTES, Duration::from_secs(5))
-        .expect("a later download works again");
+    download(
+        &manifest,
+        cache.path(),
+        MAX_RUNTIME_ARCHIVE_BYTES,
+        Duration::from_secs(5),
+    )
+    .expect("a later download works again");
 }
 
 #[test]
 fn the_install_slot_is_exclusive_and_released_by_drop() {
     let first = RuntimeJob::begin("install-test".into(), "busy".into()).expect("free");
     assert_eq!(
-        RuntimeJob::begin("install-test".into(), "busy".into()).err().as_deref(),
+        RuntimeJob::begin("install-test".into(), "busy".into())
+            .err()
+            .as_deref(),
         Some("busy")
     );
     // another job is independent
@@ -974,7 +1209,10 @@ fn a_poisoned_job_list_does_not_wedge_installs() {
     assert!(result.is_err());
     assert!(RUNTIME_JOBS.is_poisoned());
     let job = RuntimeJob::begin("poison-test".into(), "busy".into());
-    assert!(job.is_ok(), "the poisoned lock is recovered, not propagated");
+    assert!(
+        job.is_ok(),
+        "the poisoned lock is recovered, not propagated"
+    );
 }
 
 // ── archives ─────────────────────────────────────────────────────────────────────────────
@@ -1013,7 +1251,8 @@ fn a_cut_off_archive_is_rejected_before_anything_is_written() {
     let mut bytes = zip_bytes(&[("ollama.exe", &[7u8; 4096]), ("lib/a.dll", &[8u8; 4096])]);
     bytes.truncate(bytes.len() * 6 / 10);
 
-    let error = install_bytes(bytes, root.path(), "0.40.13", &|_| Ok(())).expect_err("truncated zip");
+    let error =
+        install_bytes(bytes, root.path(), "0.40.13", &|_| Ok(())).expect_err("truncated zip");
 
     assert!(error.contains("Invalid runtime ZIP archive"), "{}", error);
     assert_eq!(read_marker(&root.path().join("0.40.13")), "previous");
@@ -1023,8 +1262,14 @@ fn a_cut_off_archive_is_rejected_before_anything_is_written() {
 #[test]
 fn something_that_is_not_a_zip_is_rejected() {
     let root = Scratch::new("zip-garbage");
-    for bytes in [Vec::new(), b"PK".to_vec(), b"<html>404 not found</html>".to_vec(), vec![0u8; 100_000]] {
-        let error = install_bytes(bytes, root.path(), "0.40.13", &|_| Ok(())).expect_err("not a zip");
+    for bytes in [
+        Vec::new(),
+        b"PK".to_vec(),
+        b"<html>404 not found</html>".to_vec(),
+        vec![0u8; 100_000],
+    ] {
+        let error =
+            install_bytes(bytes, root.path(), "0.40.13", &|_| Ok(())).expect_err("not a zip");
         assert!(error.contains("Invalid runtime ZIP archive"), "{}", error);
     }
     assert_eq!(only_entries(root.path()), Vec::<String>::new());
@@ -1044,11 +1289,16 @@ fn a_corrupted_entry_aborts_the_install_and_keeps_the_previous_one() {
         + 1000;
     bytes[at] ^= 0xFF;
 
-    let error = install_bytes(bytes, root.path(), "0.40.13", &|_| Ok(())).expect_err("corrupt data");
+    let error =
+        install_bytes(bytes, root.path(), "0.40.13", &|_| Ok(())).expect_err("corrupt data");
 
     assert!(error.contains("Failed to extract"), "{}", error);
     assert_eq!(read_marker(&root.path().join("0.40.13")), "previous");
-    assert_eq!(dot_entries(root.path()), Vec::<String>::new(), "staging removed");
+    assert_eq!(
+        dot_entries(root.path()),
+        Vec::<String>::new(),
+        "staging removed"
+    );
 }
 
 #[test]
@@ -1057,7 +1307,11 @@ fn an_extraction_that_fails_half_way_cleans_up_like_a_full_disk_would() {
     // the first one succeeded, the situation a full disk creates in the middle of unpacking
     let root = Scratch::new("zip-half");
     marker(&root.path().join("0.40.13"), "previous");
-    let bytes = zip_bytes(&[("ollama.exe", b"binary"), ("lib", b"a file"), ("lib/blocked.dll", b"x")]);
+    let bytes = zip_bytes(&[
+        ("ollama.exe", b"binary"),
+        ("lib", b"a file"),
+        ("lib/blocked.dll", b"x"),
+    ]);
 
     let error = install_bytes(bytes, root.path(), "0.40.13", &|_| Ok(())).expect_err("half way");
 
@@ -1072,8 +1326,10 @@ fn an_archive_that_fails_verification_never_replaces_anything() {
     marker(&root.path().join("0.40.13"), "previous");
     let bytes = zip_bytes(&[("ollama.exe", b"new")]);
 
-    let error = install_bytes(bytes, root.path(), "0.40.13", &|_| Err("signature mismatch".into()))
-        .expect_err("rejected");
+    let error = install_bytes(bytes, root.path(), "0.40.13", &|_| {
+        Err("signature mismatch".into())
+    })
+    .expect_err("rejected");
 
     assert_eq!(error, "signature mismatch");
     assert_eq!(read_marker(&root.path().join("0.40.13")), "previous");
@@ -1103,7 +1359,11 @@ fn a_sidecar_that_claims_another_checksum_is_not_trusted() {
     // not the sidecar, not a pinned checksum, no version in the file name: refused offline
     let error = resolve_runtime_archive_manifest_for_install(&archive, &digest)
         .expect_err("unknown archive");
-    assert!(error.contains("not in the pinned runtime manifest"), "{}", error);
+    assert!(
+        error.contains("not in the pinned runtime manifest"),
+        "{}",
+        error
+    );
 
     // and a sidecar that does match is what makes an unpinned archive installable
     fs::write(
@@ -1118,12 +1378,14 @@ fn a_sidecar_that_claims_another_checksum_is_not_trusted() {
         .unwrap(),
     )
     .unwrap();
-    let manifest = resolve_runtime_archive_manifest_for_install(&archive, &digest).expect("sidecar");
+    let manifest =
+        resolve_runtime_archive_manifest_for_install(&archive, &digest).expect("sidecar");
     assert_eq!(manifest.version, "0.40.99");
     // a pinned checksum always resolves to the pinned version, whatever the sidecar says
     let pinned = resolve_pinned_manifest(DEFAULT_RUNTIME_VERSION).unwrap();
-    let from_pin = resolve_runtime_archive_manifest_for_install(&scratch.path().join("x.zip"), &pinned.sha256)
-        .expect("pinned checksum");
+    let from_pin =
+        resolve_runtime_archive_manifest_for_install(&scratch.path().join("x.zip"), &pinned.sha256)
+            .expect("pinned checksum");
     assert_eq!(from_pin.version, DEFAULT_RUNTIME_VERSION);
 }
 
@@ -1134,19 +1396,38 @@ fn a_runtime_that_died_between_unpacking_and_the_swap_never_counts_as_installed(
     let root = Scratch::new("crash-staging");
     marker(&root.path().join("0.30.4"), "installed");
     // the process died after unpacking, before the swap: a complete-looking staging folder
-    marker(&root.path().join(".staging-0.40.13-1730000000000000"), "unverified");
-    fs::create_dir_all(root.path().join(".staging-0.40.13-1730000000000000").join("lib")).unwrap();
+    marker(
+        &root.path().join(".staging-0.40.13-1730000000000000"),
+        "unverified",
+    );
+    fs::create_dir_all(
+        root.path()
+            .join(".staging-0.40.13-1730000000000000")
+            .join("lib"),
+    )
+    .unwrap();
 
     let found = scan_installed_runtime_versions(root.path());
-    assert_eq!(found.keys().cloned().collect::<Vec<_>>(), vec!["0.30.4".to_string()]);
+    assert_eq!(
+        found.keys().cloned().collect::<Vec<_>>(),
+        vec!["0.30.4".to_string()]
+    );
 
     let mut settings = crate::state::Settings::default();
     settings.providers.ollama.runtime_target_version = "0.40.13".to_string();
     settings.providers.ollama.runtime_version = String::new();
     let list = build_version_list(&settings, &[], Some(root.path())).expect("list");
-    let staged = list.iter().find(|v| v.version == "0.40.13").expect("pinned entry");
+    let staged = list
+        .iter()
+        .find(|v| v.version == "0.40.13")
+        .expect("pinned entry");
     assert!(!staged.installed, "a staging folder is not an install");
-    assert!(list.iter().find(|v| v.version == "0.30.4").unwrap().installed);
+    assert!(
+        list.iter()
+            .find(|v| v.version == "0.30.4")
+            .unwrap()
+            .installed
+    );
     assert!(
         !list.iter().any(|v| v.version.contains("staging")),
         "leftover folders are not listed as versions"
@@ -1162,25 +1443,50 @@ fn a_runtime_that_died_between_unpacking_and_the_swap_never_counts_as_installed(
 fn a_crash_between_the_two_renames_is_healed_on_the_next_cleanup() {
     let root = Scratch::new("crash-renames");
     // the old install was moved aside, the new one never arrived: no 0.40.13 folder at all
-    marker(&root.path().join(".old-0.40.13-1730000000000005"), "previous-good");
-    marker(&root.path().join(".old-0.40.13-1730000000000001"), "older leftover");
-    marker(&root.path().join(".staging-0.40.13-1730000000000009"), "unverified new");
+    marker(
+        &root.path().join(".old-0.40.13-1730000000000005"),
+        "previous-good",
+    );
+    marker(
+        &root.path().join(".old-0.40.13-1730000000000001"),
+        "older leftover",
+    );
+    marker(
+        &root.path().join(".staging-0.40.13-1730000000000009"),
+        "unverified new",
+    );
     assert!(scan_installed_runtime_versions(root.path()).is_empty());
 
     cleanup_stale_runtime_dirs(root.path());
 
-    assert_eq!(read_marker(&root.path().join("0.40.13")), "previous-good", "newest .old wins");
+    assert_eq!(
+        read_marker(&root.path().join("0.40.13")),
+        "previous-good",
+        "newest .old wins"
+    );
     assert!(scan_installed_runtime_versions(root.path()).contains_key("0.40.13"));
     // the unverified staging folder is never promoted
-    assert_eq!(read_marker(&root.path().join(".staging-0.40.13-1730000000000009")), "unverified new");
+    assert_eq!(
+        read_marker(&root.path().join(".staging-0.40.13-1730000000000009")),
+        "unverified new"
+    );
 }
 
 #[test]
 fn healing_never_overwrites_an_install_and_ignores_foreign_folder_names() {
     let root = Scratch::new("crash-guard");
     marker(&root.path().join("0.40.7"), "installed");
-    marker(&root.path().join(".old-0.40.7-1730000000000005"), "stale backup");
-    for hostile in [".old-..\\evil-1730000000000000", ".old--5", ".old-0.40.13-abc", ".old-0.40.13", ".old-a b-1"] {
+    marker(
+        &root.path().join(".old-0.40.7-1730000000000005"),
+        "stale backup",
+    );
+    for hostile in [
+        ".old-..\\evil-1730000000000000",
+        ".old--5",
+        ".old-0.40.13-abc",
+        ".old-0.40.13",
+        ".old-a b-1",
+    ] {
         // some of these names are not even creatable on Windows; that is fine
         let _ = fs::create_dir_all(root.path().join(hostile).join("lib"));
         let _ = fs::write(root.path().join(hostile).join("ollama.exe"), "x");
@@ -1216,8 +1522,15 @@ fn staging_and_backup_names_are_unique_per_call() {
     let before = stamps.len();
     stamps.sort_unstable();
     stamps.dedup();
-    assert_eq!(stamps.len(), before, "two installs in the same millisecond must not collide");
-    assert!(is_safe_runtime_version(&format!("0.40.13-{}", stamps[0])), "names stay parseable");
+    assert_eq!(
+        stamps.len(),
+        before,
+        "two installs in the same millisecond must not collide"
+    );
+    assert!(
+        is_safe_runtime_version(&format!("0.40.13-{}", stamps[0])),
+        "names stay parseable"
+    );
 }
 
 #[test]
@@ -1227,12 +1540,22 @@ fn two_installs_racing_for_one_version_leave_one_whole_runtime_and_no_leftovers(
     for round in 0..4 {
         let root = Scratch::new(&format!("race-{}", round));
         marker(&root.path().join("0.40.13"), "previous");
-        let archive_a = zip_bytes(&[("ollama.exe", b"runtime-a"), ("lib/x.dll", b"dll-a"), ("lib/y.dll", b"dll-a")]);
-        let archive_b = zip_bytes(&[("ollama.exe", b"runtime-b"), ("lib/x.dll", b"dll-b"), ("lib/y.dll", b"dll-b")]);
+        let archive_a = zip_bytes(&[
+            ("ollama.exe", b"runtime-a"),
+            ("lib/x.dll", b"dll-a"),
+            ("lib/y.dll", b"dll-a"),
+        ]);
+        let archive_b = zip_bytes(&[
+            ("ollama.exe", b"runtime-b"),
+            ("lib/x.dll", b"dll-b"),
+            ("lib/y.dll", b"dll-b"),
+        ]);
 
         let outcomes: Vec<Result<PathBuf, String>> = std::thread::scope(|scope| {
-            let a = scope.spawn(|| install_bytes(archive_a.clone(), root.path(), "0.40.13", &|_| Ok(())));
-            let b = scope.spawn(|| install_bytes(archive_b.clone(), root.path(), "0.40.13", &|_| Ok(())));
+            let a = scope
+                .spawn(|| install_bytes(archive_a.clone(), root.path(), "0.40.13", &|_| Ok(())));
+            let b = scope
+                .spawn(|| install_bytes(archive_b.clone(), root.path(), "0.40.13", &|_| Ok(())));
             vec![a.join().expect("no panic"), b.join().expect("no panic")]
         });
 
@@ -1259,15 +1582,25 @@ fn two_installs_racing_for_one_version_leave_one_whole_runtime_and_no_leftovers(
             leftovers
         );
         if outcomes.iter().all(|o| o.is_ok()) {
-            assert!(leftovers.is_empty(), "both succeeded, round {}: {:?}", round, leftovers);
+            assert!(
+                leftovers.is_empty(),
+                "both succeeded, round {}: {:?}",
+                round,
+                leftovers
+            );
         }
     }
 }
 
 #[test]
 fn the_version_that_is_serving_cannot_be_replaced_and_the_user_is_told_up_front() {
-    let said = install_blocked_by_running_server("0.40.13", Some("0.40.13"), true).expect("blocked");
-    assert!(said.contains("running right now") && said.contains("0.40.13"), "{}", said);
+    let said =
+        install_blocked_by_running_server("0.40.13", Some("0.40.13"), true).expect("blocked");
+    assert!(
+        said.contains("running right now") && said.contains("0.40.13"),
+        "{}",
+        said
+    );
     // another version, an unreadable version, or an external server never block
     assert!(install_blocked_by_running_server("0.40.13", Some("0.30.4"), true).is_none());
     assert!(install_blocked_by_running_server("0.40.13", None, true).is_none());
@@ -1287,15 +1620,29 @@ fn replacing_a_runtime_whose_exe_is_open_fails_cleanly_through_the_whole_pipelin
         .open(root.path().join("0.40.13").join("ollama.exe"))
         .expect("hold the binary open");
 
-    let error = install_bytes(zip_bytes(&[("ollama.exe", b"new")]), root.path(), "0.40.13", &|_| Ok(()))
-        .expect_err("cannot swap while it runs");
+    let error = install_bytes(
+        zip_bytes(&[("ollama.exe", b"new")]),
+        root.path(),
+        "0.40.13",
+        &|_| Ok(()),
+    )
+    .expect_err("cannot swap while it runs");
 
     assert!(error.contains("is in use"), "{}", error);
-    assert_eq!(dot_entries(root.path()), Vec::<String>::new(), "staging removed again");
+    assert_eq!(
+        dot_entries(root.path()),
+        Vec::<String>::new(),
+        "staging removed again"
+    );
     drop(running);
     assert_eq!(read_marker(&root.path().join("0.40.13")), "serving");
-    install_bytes(zip_bytes(&[("ollama.exe", b"new")]), root.path(), "0.40.13", &|_| Ok(()))
-        .expect("works once it stopped");
+    install_bytes(
+        zip_bytes(&[("ollama.exe", b"new")]),
+        root.path(),
+        "0.40.13",
+        &|_| Ok(()),
+    )
+    .expect("works once it stopped");
     assert_eq!(read_marker(&root.path().join("0.40.13")), "new");
 }
 
@@ -1380,10 +1727,13 @@ impl StartHost for FakeHost {
     fn await_starting_server(&mut self) -> LaunchOutcome {
         let mut world = self.world();
         world.awaits += 1;
-        world.await_outcome.clone().unwrap_or(LaunchOutcome::Failed {
-            stage: "stopped",
-            message: "not scripted".into(),
-        })
+        world
+            .await_outcome
+            .clone()
+            .unwrap_or(LaunchOutcome::Failed {
+                stage: "stopped",
+                message: "not scripted".into(),
+            })
     }
     fn launch(&mut self, binary: &Path) -> LaunchOutcome {
         let delay = self.world().launch_delay;
@@ -1392,11 +1742,18 @@ impl StartHost for FakeHost {
         }
         let mut world = self.world();
         world.launches.push(binary.to_path_buf());
-        let outcome = world.script.get(binary).cloned().unwrap_or(LaunchOutcome::Ready {
-            pid: 100 + world.launches.len() as u32,
-            waited: Duration::from_millis(5),
-        });
-        if matches!(outcome, LaunchOutcome::Ready { .. } | LaunchOutcome::Pending { .. }) {
+        let outcome = world
+            .script
+            .get(binary)
+            .cloned()
+            .unwrap_or(LaunchOutcome::Ready {
+                pid: 100 + world.launches.len() as u32,
+                waited: Duration::from_millis(5),
+            });
+        if matches!(
+            outcome,
+            LaunchOutcome::Ready { .. } | LaunchOutcome::Pending { .. }
+        ) {
             world.managed_alive = true;
             world.reachable = matches!(outcome, LaunchOutcome::Ready { .. });
             world.running_version = world.versions.get(binary).cloned();
@@ -1410,11 +1767,17 @@ fn bin(version: &str) -> PathBuf {
 }
 
 fn ready(pid: u32) -> LaunchOutcome {
-    LaunchOutcome::Ready { pid, waited: Duration::from_millis(5) }
+    LaunchOutcome::Ready {
+        pid,
+        waited: Duration::from_millis(5),
+    }
 }
 
 fn failed(stage: &'static str, message: &str) -> LaunchOutcome {
-    LaunchOutcome::Failed { stage, message: message.to_string() }
+    LaunchOutcome::Failed {
+        stage,
+        message: message.to_string(),
+    }
 }
 
 /// The scenario "managed server on `running` is serving; the user selected `wanted`".
@@ -1451,7 +1814,9 @@ fn a_start_that_finds_a_matching_server_launches_nothing() {
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &no_previous);
     assert_eq!(
         resolution,
-        StartResolution::AlreadyRunning { running_version: "0.40.13".into() }
+        StartResolution::AlreadyRunning {
+            running_version: "0.40.13".into()
+        }
     );
     assert!(host.world().launches.is_empty() && host.world().stops == 0);
 }
@@ -1469,10 +1834,15 @@ fn a_foreign_server_is_left_alone_even_when_our_own_child_died() {
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
     assert_eq!(
         resolution,
-        StartResolution::AlreadyRunning { running_version: "0.30.4".into() }
+        StartResolution::AlreadyRunning {
+            running_version: "0.30.4".into()
+        }
     );
     let world = host.world();
-    assert!(world.launches.is_empty(), "never spawn on top of a foreign server");
+    assert!(
+        world.launches.is_empty(),
+        "never spawn on top of a foreign server"
+    );
     assert_eq!(world.stops, 0, "never stop what is not ours");
 }
 
@@ -1490,7 +1860,9 @@ fn a_slow_version_endpoint_never_triggers_a_switch() {
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
     assert_eq!(
         resolution,
-        StartResolution::AlreadyRunning { running_version: "0.40.13".into() }
+        StartResolution::AlreadyRunning {
+            running_version: "0.40.13".into()
+        }
     );
     assert_eq!(host.world().stops, 0);
 }
@@ -1509,15 +1881,23 @@ fn a_foreign_program_on_the_port_fails_fast_with_a_clear_message() {
         StartResolution::Failed { stage, message } => {
             assert_eq!(stage, "port_in_use");
             assert!(
-                message.contains("127.0.0.1:11434") && message.contains("does not answer like Ollama"),
+                message.contains("127.0.0.1:11434")
+                    && message.contains("does not answer like Ollama"),
                 "{}",
                 message
             );
         }
         other => panic!("expected a clear failure, got {:?}", other),
     }
-    assert!(host.world().launches.is_empty(), "a second ollama serve would only die on the port");
-    assert_eq!(host.world().reclaims, 1, "a stale Ollama of ours is looked for before the port counts as foreign");
+    assert!(
+        host.world().launches.is_empty(),
+        "a second ollama serve would only die on the port"
+    );
+    assert_eq!(
+        host.world().reclaims,
+        1,
+        "a stale Ollama of ours is looked for before the port counts as foreign"
+    );
 }
 
 #[test]
@@ -1532,7 +1912,14 @@ fn a_hung_leftover_of_a_crashed_session_is_cleared_away_before_the_start() {
         ..Default::default()
     });
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &no_previous);
-    assert!(matches!(resolution, StartResolution::Launched(LaunchOutcome::Ready { .. })), "{:?}", resolution);
+    assert!(
+        matches!(
+            resolution,
+            StartResolution::Launched(LaunchOutcome::Ready { .. })
+        ),
+        "{:?}",
+        resolution
+    );
     assert_eq!(host.world().reclaims, 1);
     assert_eq!(host.world().launches, vec![bin("0.40.13")]);
 }
@@ -1541,16 +1928,32 @@ fn a_hung_leftover_of_a_crashed_session_is_cleared_away_before_the_start() {
 fn a_free_port_with_nothing_running_just_spawns() {
     let host = FakeHost::new(FakeWorld::default());
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &no_previous);
-    assert!(matches!(resolution, StartResolution::Launched(LaunchOutcome::Ready { .. })), "{:?}", resolution);
+    assert!(
+        matches!(
+            resolution,
+            StartResolution::Launched(LaunchOutcome::Ready { .. })
+        ),
+        "{:?}",
+        resolution
+    );
     assert_eq!(host.world().launches, vec![bin("0.40.13")]);
 }
 
 #[test]
 fn a_switch_stops_the_old_server_before_it_starts_the_new_one() {
     let host = FakeHost::new(switching_world("0.30.4"));
-    host.world().versions.insert(bin("0.40.13"), "0.40.13".into());
+    host.world()
+        .versions
+        .insert(bin("0.40.13"), "0.40.13".into());
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
-    assert!(matches!(resolution, StartResolution::Launched(LaunchOutcome::Ready { .. })), "{:?}", resolution);
+    assert!(
+        matches!(
+            resolution,
+            StartResolution::Launched(LaunchOutcome::Ready { .. })
+        ),
+        "{:?}",
+        resolution
+    );
     let world = host.world();
     assert_eq!(world.stops, 1);
     assert_eq!(world.launches, vec![bin("0.40.13")]);
@@ -1560,40 +1963,75 @@ fn a_switch_stops_the_old_server_before_it_starts_the_new_one() {
 #[test]
 fn a_switch_that_fails_to_start_goes_back_to_the_previous_runtime() {
     let host = FakeHost::new(switching_world("0.30.4"));
-    host.world().script.insert(bin("0.40.13"), failed("spawn_exited", "Ollama exited right after it was started (exit code 1)."));
+    host.world().script.insert(
+        bin("0.40.13"),
+        failed(
+            "spawn_exited",
+            "Ollama exited right after it was started (exit code 1).",
+        ),
+    );
     host.world().versions.insert(bin("0.30.4"), "0.30.4".into());
 
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
 
     match resolution {
-        StartResolution::FellBack { outcome, binary, previous_version, message } => {
+        StartResolution::FellBack {
+            outcome,
+            binary,
+            previous_version,
+            message,
+        } => {
             assert!(matches!(outcome, LaunchOutcome::Ready { .. }));
             assert_eq!(binary, bin("0.30.4"));
             assert_eq!(previous_version, "0.30.4");
-            assert!(message.contains("Could not start Ollama 0.40.13"), "{}", message);
+            assert!(
+                message.contains("Could not start Ollama 0.40.13"),
+                "{}",
+                message
+            );
             assert!(message.contains("exit code 1"), "{}", message);
-            assert!(message.contains("previous runtime 0.30.4 was started again"), "{}", message);
+            assert!(
+                message.contains("previous runtime 0.30.4 was started again"),
+                "{}",
+                message
+            );
         }
         other => panic!("the user must not be left without a runtime: {:?}", other),
     }
     let world = host.world();
-    assert_eq!(world.launches, vec![bin("0.40.13"), bin("0.30.4")], "new first, then back");
-    assert_eq!(world.stops, 1, "the old server was stopped once, for the switch");
+    assert_eq!(
+        world.launches,
+        vec![bin("0.40.13"), bin("0.30.4")],
+        "new first, then back"
+    );
+    assert_eq!(
+        world.stops, 1,
+        "the old server was stopped once, for the switch"
+    );
     assert!(world.reachable && world.running_version.as_deref() == Some("0.30.4"));
 }
 
 #[test]
 fn a_spawn_error_on_the_new_runtime_falls_back_too() {
     let host = FakeHost::new(switching_world("0.30.4"));
-    host.world().script.insert(bin("0.40.13"), failed("spawn_failed", "Access is denied. (os error 5)"));
+    host.world().script.insert(
+        bin("0.40.13"),
+        failed("spawn_failed", "Access is denied. (os error 5)"),
+    );
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
-    assert!(matches!(resolution, StartResolution::FellBack { .. }), "{:?}", resolution);
+    assert!(
+        matches!(resolution, StartResolution::FellBack { .. }),
+        "{:?}",
+        resolution
+    );
 }
 
 #[test]
 fn a_failing_switch_without_a_known_previous_runtime_says_so_plainly() {
     let host = FakeHost::new(switching_world("0.30.4"));
-    host.world().script.insert(bin("0.40.13"), failed("spawn_exited", "boom"));
+    host.world()
+        .script
+        .insert(bin("0.40.13"), failed("spawn_exited", "boom"));
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &no_previous);
     match resolution {
         StartResolution::Failed { stage, message } => {
@@ -1602,19 +2040,31 @@ fn a_failing_switch_without_a_known_previous_runtime_says_so_plainly() {
         }
         other => panic!("{:?}", other),
     }
-    assert_eq!(host.world().launches, vec![bin("0.40.13")], "nothing to go back to");
+    assert_eq!(
+        host.world().launches,
+        vec![bin("0.40.13")],
+        "nothing to go back to"
+    );
 }
 
 #[test]
 fn when_the_previous_runtime_cannot_start_again_both_reasons_are_reported() {
     let host = FakeHost::new(switching_world("0.30.4"));
-    host.world().script.insert(bin("0.40.13"), failed("spawn_exited", "exit code 1"));
-    host.world().script.insert(bin("0.30.4"), failed("spawn_failed", "file not found"));
+    host.world()
+        .script
+        .insert(bin("0.40.13"), failed("spawn_exited", "exit code 1"));
+    host.world()
+        .script
+        .insert(bin("0.30.4"), failed("spawn_failed", "file not found"));
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
     match resolution {
         StartResolution::Failed { stage, message } => {
             assert_eq!(stage, "version_switch_failed");
-            assert!(message.contains("exit code 1") && message.contains("file not found"), "{}", message);
+            assert!(
+                message.contains("exit code 1") && message.contains("file not found"),
+                "{}",
+                message
+            );
             assert!(message.contains("Start Ollama manually"), "{}", message);
         }
         other => panic!("{:?}", other),
@@ -1631,7 +2081,11 @@ fn a_switch_that_cannot_free_the_port_launches_nothing() {
     match resolution {
         StartResolution::Failed { stage, message } => {
             assert_eq!(stage, "version_switch_failed");
-            assert!(message.contains("still bound to 127.0.0.1:11434"), "{}", message);
+            assert!(
+                message.contains("still bound to 127.0.0.1:11434"),
+                "{}",
+                message
+            );
         }
         other => panic!("{:?}", other),
     }
@@ -1643,29 +2097,56 @@ fn a_new_runtime_that_is_merely_slow_is_neither_failure_nor_fallback() {
     let host = FakeHost::new(switching_world("0.30.4"));
     host.world().script.insert(
         bin("0.40.13"),
-        LaunchOutcome::Pending { pid: 7, waited: Duration::from_secs(12) },
+        LaunchOutcome::Pending {
+            pid: 7,
+            waited: Duration::from_secs(12),
+        },
     );
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
-    assert!(matches!(resolution, StartResolution::Launched(LaunchOutcome::Pending { pid: 7, .. })), "{:?}", resolution);
-    assert_eq!(host.world().launches, vec![bin("0.40.13")], "the previous runtime is not started on top");
+    assert!(
+        matches!(
+            resolution,
+            StartResolution::Launched(LaunchOutcome::Pending { pid: 7, .. })
+        ),
+        "{:?}",
+        resolution
+    );
+    assert_eq!(
+        host.world().launches,
+        vec![bin("0.40.13")],
+        "the previous runtime is not started on top"
+    );
 }
 
 #[test]
 fn going_back_to_the_runtime_that_just_failed_is_not_attempted() {
     let host = FakeHost::new(switching_world("0.40.13"));
-    host.world().script.insert(bin("0.40.13"), failed("spawn_exited", "boom"));
+    host.world()
+        .script
+        .insert(bin("0.40.13"), failed("spawn_exited", "boom"));
     // the selected and the previous binary are the same file (a damaged runtime)
-    let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.30.4", &|_| Some(bin("0.40.13")));
-    assert!(matches!(resolution, StartResolution::Failed { .. }), "{:?}", resolution);
+    let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.30.4", &|_| {
+        Some(bin("0.40.13"))
+    });
+    assert!(
+        matches!(resolution, StartResolution::Failed { .. }),
+        "{:?}",
+        resolution
+    );
     assert_eq!(host.world().launches.len(), 1);
 }
 
 #[test]
 fn another_program_taking_the_port_during_launch_counts_as_running_not_as_failure() {
     let host = FakeHost::new(FakeWorld::default());
-    host.world().script.insert(bin("0.40.13"), LaunchOutcome::TakenOver);
+    host.world()
+        .script
+        .insert(bin("0.40.13"), LaunchOutcome::TakenOver);
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &previous_of);
-    assert_eq!(resolution, StartResolution::Launched(LaunchOutcome::TakenOver));
+    assert_eq!(
+        resolution,
+        StartResolution::Launched(LaunchOutcome::TakenOver)
+    );
 }
 
 #[test]
@@ -1682,12 +2163,18 @@ fn a_young_silent_server_of_ours_is_awaited_and_not_killed() {
     assert_eq!(resolution, StartResolution::Launched(ready(55)));
     let world = host.world();
     assert_eq!(world.awaits, 1);
-    assert!(world.launches.is_empty() && world.stops == 0, "a slow start must not be restarted from zero");
+    assert!(
+        world.launches.is_empty() && world.stops == 0,
+        "a slow start must not be restarted from zero"
+    );
 }
 
 #[test]
 fn a_silent_server_of_ours_that_stays_silent_is_pending_not_restarted() {
-    let pending = LaunchOutcome::Pending { pid: 55, waited: Duration::from_secs(12) };
+    let pending = LaunchOutcome::Pending {
+        pid: 55,
+        waited: Duration::from_secs(12),
+    };
     let host = FakeHost::new(FakeWorld {
         managed_alive: true,
         spawn_age: Some(Duration::from_secs(40)),
@@ -1710,7 +2197,14 @@ fn a_server_of_ours_that_never_answered_for_ages_is_replaced() {
         ..Default::default()
     });
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &no_previous);
-    assert!(matches!(resolution, StartResolution::Launched(LaunchOutcome::Ready { .. })), "{:?}", resolution);
+    assert!(
+        matches!(
+            resolution,
+            StartResolution::Launched(LaunchOutcome::Ready { .. })
+        ),
+        "{:?}",
+        resolution
+    );
     assert_eq!(host.world().awaits, 0);
     assert_eq!(host.world().launches.len(), 1);
 }
@@ -1726,7 +2220,14 @@ fn an_awaited_server_that_died_is_replaced_by_a_fresh_start() {
         ..Default::default()
     });
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &no_previous);
-    assert!(matches!(resolution, StartResolution::Launched(LaunchOutcome::Ready { .. })), "{:?}", resolution);
+    assert!(
+        matches!(
+            resolution,
+            StartResolution::Launched(LaunchOutcome::Ready { .. })
+        ),
+        "{:?}",
+        resolution
+    );
     assert_eq!(host.world().launches, vec![bin("0.40.13")]);
 }
 
@@ -1737,7 +2238,9 @@ fn two_simultaneous_starts_launch_exactly_one_server() {
         ..Default::default()
     };
     let host = FakeHost::new(world);
-    host.world().versions.insert(bin("0.40.13"), "0.40.13".into());
+    host.world()
+        .versions
+        .insert(bin("0.40.13"), "0.40.13".into());
     let barrier = std::sync::Barrier::new(2);
 
     let resolutions: Vec<StartResolution> = std::thread::scope(|scope| {
@@ -1751,13 +2254,24 @@ fn two_simultaneous_starts_launch_exactly_one_server() {
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().expect("no panic")).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("no panic"))
+            .collect()
     });
 
     assert_eq!(host.world().launches.len(), 1, "{:?}", resolutions);
-    assert_eq!(host.world().stops, 0, "the second start must not stop the first one's server");
-    assert!(resolutions.iter().any(|r| matches!(r, StartResolution::Launched(LaunchOutcome::Ready { .. }))));
-    assert!(resolutions.contains(&StartResolution::AlreadyRunning { running_version: "0.40.13".into() }));
+    assert_eq!(
+        host.world().stops,
+        0,
+        "the second start must not stop the first one's server"
+    );
+    assert!(resolutions
+        .iter()
+        .any(|r| matches!(r, StartResolution::Launched(LaunchOutcome::Ready { .. }))));
+    assert!(resolutions.contains(&StartResolution::AlreadyRunning {
+        running_version: "0.40.13".into()
+    }));
 }
 
 #[test]
@@ -1770,15 +2284,25 @@ fn a_poisoned_start_lock_does_not_block_every_later_start() {
     assert!(START_LOCK.is_poisoned());
     let host = FakeHost::new(FakeWorld::default());
     let resolution = resolve_start(&mut host.clone(), &bin("0.40.13"), "0.40.13", &no_previous);
-    assert!(matches!(resolution, StartResolution::Launched(_)), "{:?}", resolution);
+    assert!(
+        matches!(resolution, StartResolution::Launched(_)),
+        "{:?}",
+        resolution
+    );
 }
 
 #[test]
 fn spawn_plans_are_refined_by_the_process_table_and_the_port() {
     let free = || false;
     let taken = || true;
-    assert_eq!(refine_spawn_plan(false, None, free), RuntimeStartPlan::Spawn);
-    assert_eq!(refine_spawn_plan(false, None, taken), RuntimeStartPlan::PortBlocked);
+    assert_eq!(
+        refine_spawn_plan(false, None, free),
+        RuntimeStartPlan::Spawn
+    );
+    assert_eq!(
+        refine_spawn_plan(false, None, taken),
+        RuntimeStartPlan::PortBlocked
+    );
     assert_eq!(
         refine_spawn_plan(true, Some(Duration::from_secs(5)), taken),
         RuntimeStartPlan::AwaitStarting
@@ -1788,10 +2312,16 @@ fn spawn_plans_are_refined_by_the_process_table_and_the_port() {
         RuntimeStartPlan::Spawn,
         "the grace period is over"
     );
-    assert_eq!(refine_spawn_plan(true, None, taken), RuntimeStartPlan::Spawn, "age unknown: as before");
+    assert_eq!(
+        refine_spawn_plan(true, None, taken),
+        RuntimeStartPlan::Spawn,
+        "age unknown: as before"
+    );
     // the port is only probed when nothing of ours runs
     assert_eq!(
-        refine_spawn_plan(true, Some(Duration::from_secs(5)), || panic!("must not probe")),
+        refine_spawn_plan(true, Some(Duration::from_secs(5)), || panic!(
+            "must not probe"
+        )),
         RuntimeStartPlan::AwaitStarting
     );
 }
@@ -1823,11 +2353,23 @@ fn a_child_that_dies_at_once_ends_the_wait_at_once() {
     let slot = Mutex::new(Some(spawn_hidden("cmd", &["/C", "exit", "3"])));
     let started = Instant::now();
 
-    let outcome = wait_for_server(&slot, Duration::from_secs(20), Duration::from_millis(50), &mut |_| false);
+    let outcome = wait_for_server(
+        &slot,
+        Duration::from_secs(20),
+        Duration::from_millis(50),
+        &mut |_| false,
+    );
 
     assert_eq!(outcome, WaitOutcome::Exited(Some(3)));
-    assert!(started.elapsed() < Duration::from_secs(5), "waited {:?} on a corpse", started.elapsed());
-    assert!(slot.lock().unwrap().is_none(), "the dead child is removed from the slot");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "waited {:?} on a corpse",
+        started.elapsed()
+    );
+    assert!(
+        slot.lock().unwrap().is_none(),
+        "the dead child is removed from the slot"
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -1835,10 +2377,15 @@ fn a_child_that_dies_at_once_ends_the_wait_at_once() {
 fn a_living_child_that_answers_ends_the_wait_with_ready() {
     let slot = Mutex::new(Some(sleeper(30)));
     let mut probes = 0;
-    let outcome = wait_for_server(&slot, Duration::from_secs(10), Duration::from_millis(20), &mut |attempt| {
-        probes += 1;
-        attempt >= 3
-    });
+    let outcome = wait_for_server(
+        &slot,
+        Duration::from_secs(10),
+        Duration::from_millis(20),
+        &mut |attempt| {
+            probes += 1;
+            attempt >= 3
+        },
+    );
     assert_eq!(outcome, WaitOutcome::Ready);
     assert_eq!(probes, 4);
     let mut child = slot.lock().unwrap().take().unwrap();
@@ -1851,7 +2398,12 @@ fn a_living_child_that_answers_ends_the_wait_with_ready() {
 fn a_living_child_that_stays_silent_times_out_and_stays_alive() {
     let slot = Mutex::new(Some(sleeper(30)));
     let started = Instant::now();
-    let outcome = wait_for_server(&slot, Duration::from_millis(400), Duration::from_millis(50), &mut |_| false);
+    let outcome = wait_for_server(
+        &slot,
+        Duration::from_millis(400),
+        Duration::from_millis(50),
+        &mut |_| false,
+    );
     assert_eq!(outcome, WaitOutcome::TimedOut);
     assert!(started.elapsed() >= Duration::from_millis(400));
     assert_eq!(managed_child_state(&slot), ChildState::Alive);
@@ -1866,14 +2418,24 @@ fn a_child_that_dies_while_something_else_answers_is_not_reported_ready() {
     // the port was taken by another server: our own process died, the endpoint still answers
     let slot = Mutex::new(Some(spawn_hidden("cmd", &["/C", "exit", "1"])));
     std::thread::sleep(Duration::from_millis(800)); // the child is certainly gone now
-    let outcome = wait_for_server(&slot, Duration::from_secs(10), Duration::from_millis(50), &mut |_| true);
+    let outcome = wait_for_server(
+        &slot,
+        Duration::from_secs(10),
+        Duration::from_millis(50),
+        &mut |_| true,
+    );
     assert_eq!(outcome, WaitOutcome::Exited(Some(1)));
 }
 
 #[test]
 fn a_child_stopped_by_someone_else_ends_the_wait() {
     let slot: Mutex<Option<std::process::Child>> = Mutex::new(None);
-    let outcome = wait_for_server(&slot, Duration::from_secs(10), Duration::from_millis(20), &mut |_| true);
+    let outcome = wait_for_server(
+        &slot,
+        Duration::from_secs(10),
+        Duration::from_millis(20),
+        &mut |_| true,
+    );
     assert_eq!(outcome, WaitOutcome::Gone);
 }
 
@@ -1887,7 +2449,12 @@ fn the_previous_runtime_is_found_by_stored_path_or_by_its_version_folder() {
     let mut settings = crate::state::Settings::default();
 
     // the stored pair belongs to the running version: that exact path
-    settings.providers.ollama.runtime_path = root.path().join("0.30.4").join("ollama.exe").to_string_lossy().to_string();
+    settings.providers.ollama.runtime_path = root
+        .path()
+        .join("0.30.4")
+        .join("ollama.exe")
+        .to_string_lossy()
+        .to_string();
     settings.providers.ollama.runtime_version = "0.30.4".to_string();
     assert_eq!(
         previous_runtime_binary(&settings, Some(root.path()), "0.30.4"),
@@ -1896,7 +2463,12 @@ fn the_previous_runtime_is_found_by_stored_path_or_by_its_version_folder() {
 
     // right after an install the stored pair already names the NEW runtime: the running
     // version is found by its folder instead
-    settings.providers.ollama.runtime_path = root.path().join("0.40.13").join("ollama.exe").to_string_lossy().to_string();
+    settings.providers.ollama.runtime_path = root
+        .path()
+        .join("0.40.13")
+        .join("ollama.exe")
+        .to_string_lossy()
+        .to_string();
     settings.providers.ollama.runtime_version = "0.40.13".to_string();
     assert_eq!(
         previous_runtime_binary(&settings, Some(root.path()), "0.30.4"),
@@ -1904,10 +2476,19 @@ fn the_previous_runtime_is_found_by_stored_path_or_by_its_version_folder() {
     );
 
     // not installed, no root, or not a plain version: nothing to go back to
-    assert_eq!(previous_runtime_binary(&settings, Some(root.path()), "0.20.0"), None);
+    assert_eq!(
+        previous_runtime_binary(&settings, Some(root.path()), "0.20.0"),
+        None
+    );
     assert_eq!(previous_runtime_binary(&settings, None, "0.30.4"), None);
-    assert_eq!(previous_runtime_binary(&settings, Some(root.path()), "..\\0.30.4"), None);
-    assert_eq!(previous_runtime_binary(&settings, Some(root.path()), ""), None);
+    assert_eq!(
+        previous_runtime_binary(&settings, Some(root.path()), "..\\0.30.4"),
+        None
+    );
+    assert_eq!(
+        previous_runtime_binary(&settings, Some(root.path()), ""),
+        None
+    );
 }
 
 #[test]
@@ -1961,12 +2542,20 @@ fn a_stale_pid_file_never_kills_an_unrelated_process_that_reused_the_pid() {
         .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .status();
-    assert!(wait_until(Duration::from_secs(5), || victim.try_wait().map(|s| s.is_some()).unwrap_or(false)),
-        "control: the old command kills whatever owns the pid");
+    assert!(
+        wait_until(Duration::from_secs(5), || victim
+            .try_wait()
+            .map(|s| s.is_some())
+            .unwrap_or(false)),
+        "control: the old command kills whatever owns the pid"
+    );
 
     kill_stale_ollama_pid_in(&lockfile);
 
-    assert!(stranger.try_wait().unwrap().is_none(), "the stranger must survive");
+    assert!(
+        stranger.try_wait().unwrap().is_none(),
+        "the stranger must survive"
+    );
     assert!(process_alive(pid));
     assert!(!lockfile.exists(), "the stale file is removed either way");
     let _ = stranger.kill();
@@ -1979,7 +2568,9 @@ fn a_stale_pid_file_still_kills_a_real_leftover_ollama() {
     let dir = Scratch::new("pidfile-ollama");
     let lockfile = dir.path().join("ollama_managed.pid");
     // a process whose image really is called ollama.exe
-    let system_root = std::env::var_os("SystemRoot").map(PathBuf::from).expect("SystemRoot");
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .expect("SystemRoot");
     let fake = dir.path().join("ollama.exe");
     fs::copy(system_root.join("System32").join("PING.EXE"), &fake).expect("copy ping.exe");
     let mut leftover = Command::new(&fake)
@@ -1995,7 +2586,10 @@ fn a_stale_pid_file_still_kills_a_real_leftover_ollama() {
     kill_stale_ollama_pid_in(&lockfile);
 
     assert!(
-        wait_until(Duration::from_secs(5), || leftover.try_wait().map(|s| s.is_some()).unwrap_or(false)),
+        wait_until(Duration::from_secs(5), || leftover
+            .try_wait()
+            .map(|s| s.is_some())
+            .unwrap_or(false)),
         "the leftover Ollama must be killed"
     );
     assert!(!lockfile.exists());
@@ -2031,8 +2625,9 @@ fn start_and_detect_agree_for_every_combination_of_what_exists() {
     for stored in [None, Some(&stored_exe), Some(&gone_exe)] {
         for has_managed in [false, true] {
             let mut settings = crate::state::Settings::default();
-            settings.providers.ollama.runtime_path =
-                stored.map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+            settings.providers.ollama.runtime_path = stored
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
             settings.providers.ollama.runtime_target_version = String::new();
             let managed = has_managed.then_some(root.path());
             let started = select_runtime_binary_in(&settings, managed).ok();
@@ -2052,7 +2647,11 @@ fn start_and_detect_agree_for_every_combination_of_what_exists() {
             }
         }
     }
-    assert!(disagreements.is_empty(), "start and detect disagree:\n{}", disagreements.join("\n"));
+    assert!(
+        disagreements.is_empty(),
+        "start and detect disagree:\n{}",
+        disagreements.join("\n")
+    );
 }
 
 // ───────────────────────── 7. signature probe and version probe have a time limit ─────────────────────────
@@ -2113,13 +2712,21 @@ fn a_hanging_signature_probe_ends_as_unverified_and_the_process_is_killed() {
         }
         other => panic!("expected Unverified, got {:?}", other),
     }
-    assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(15),
+        "{:?}",
+        started.elapsed()
+    );
     let pid: u32 = fs::read_to_string(&pid_file)
         .expect("the script reported its pid before it hung")
         .trim()
         .parse()
         .expect("pid");
-    assert!(pid_is_gone(pid), "the hung PowerShell (pid {}) was left running", pid);
+    assert!(
+        pid_is_gone(pid),
+        "the hung PowerShell (pid {}) was left running",
+        pid
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -2144,7 +2751,11 @@ fn a_signature_probe_that_times_out_is_fail_open_even_for_a_tampered_binary() {
         Duration::from_secs(2),
     )
     .expect("fail-open");
-    assert!(matches!(hung, SignatureVerdict::Unverified(_)), "{:?}", hung);
+    assert!(
+        matches!(hung, SignatureVerdict::Unverified(_)),
+        "{:?}",
+        hung
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -2169,7 +2780,9 @@ fn a_probe_that_cannot_run_or_prints_nothing_is_unverified_with_a_reason() {
     let missing = scratch.path().join("no-such-powershell.exe");
     let verdict = verify_authenticode_signer_with(&missing, &scratch.path().join("x.exe")).unwrap();
     match verdict {
-        SignatureVerdict::Unverified(reason) => assert!(reason.contains("could not run"), "{}", reason),
+        SignatureVerdict::Unverified(reason) => {
+            assert!(reason.contains("could not run"), "{}", reason)
+        }
         other => panic!("{:?}", other),
     }
     let silent = verify_authenticode_signer_timed(
@@ -2192,18 +2805,23 @@ fn the_runner_captures_everything_a_chatty_child_prints_without_deadlock() {
     let big = scratch.path().join("big.txt");
     fs::write(&big, "x".repeat(2 * 1024 * 1024)).unwrap();
     let mut cmd = Command::new("cmd");
-    cmd.args(["/C", "type", &big.to_string_lossy()]).creation_flags(CREATE_NO_WINDOW);
+    cmd.args(["/C", "type", &big.to_string_lossy()])
+        .creation_flags(CREATE_NO_WINDOW);
 
     let output = run_with_timeout(&mut cmd, Duration::from_secs(30)).expect("runs");
 
     assert_eq!(output.stdout.len(), 2 * 1024 * 1024);
 
     let mut errs = Command::new("cmd");
-    errs.args(["/C", "echo oops 1>&2"]).creation_flags(CREATE_NO_WINDOW);
+    errs.args(["/C", "echo oops 1>&2"])
+        .creation_flags(CREATE_NO_WINDOW);
     let output = run_with_timeout(&mut errs, Duration::from_secs(30)).expect("runs");
     assert!(String::from_utf8_lossy(&output.stderr).contains("oops"));
     assert!(matches!(
-        run_with_timeout(&mut Command::new("Z:\\no\\such\\program.exe"), Duration::from_secs(5)),
+        run_with_timeout(
+            &mut Command::new("Z:\\no\\such\\program.exe"),
+            Duration::from_secs(5)
+        ),
         Err(RunError::Spawn(_))
     ));
 }
@@ -2212,11 +2830,16 @@ fn the_runner_captures_everything_a_chatty_child_prints_without_deadlock() {
 #[test]
 fn the_runner_kills_a_child_that_outlives_its_limit() {
     let mut cmd = Command::new("ping");
-    cmd.args(["-n", "60", "127.0.0.1"]).creation_flags(CREATE_NO_WINDOW);
+    cmd.args(["-n", "60", "127.0.0.1"])
+        .creation_flags(CREATE_NO_WINDOW);
     let started = Instant::now();
     let outcome = run_with_timeout(&mut cmd, Duration::from_millis(700));
     assert!(matches!(outcome, Err(RunError::TimedOut)));
-    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -2230,12 +2853,19 @@ fn a_binary_that_hangs_on_version_is_unknown_not_a_hang() {
     let version = probe_binary_version(&hang, Duration::from_secs(1));
 
     assert_eq!(version, "");
-    assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "{:?}",
+        started.elapsed()
+    );
 
     // and a binary that answers in time still reports its version
     let quick = scratch.path().join("quick-ollama.cmd");
     fs::write(&quick, "@echo off\r\necho ollama version is 9.8.7\r\n").unwrap();
-    assert_eq!(probe_binary_version(&quick, Duration::from_secs(20)), "9.8.7");
+    assert_eq!(
+        probe_binary_version(&quick, Duration::from_secs(20)),
+        "9.8.7"
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -2246,9 +2876,17 @@ fn a_binary_replaced_in_place_is_not_served_from_the_version_cache() {
     let exe = scratch.path().join("ollama.cmd");
     fs::write(&exe, "@echo off\r\necho ollama version is 1.0.0\r\n").unwrap();
     assert_eq!(parse_ollama_version(&exe), "1.0.0");
-    assert_eq!(parse_ollama_version(&exe), "1.0.0", "unchanged file: from the cache");
+    assert_eq!(
+        parse_ollama_version(&exe),
+        "1.0.0",
+        "unchanged file: from the cache"
+    );
 
-    fs::write(&exe, "@echo off\r\necho ollama version is 1.0.1-and-longer\r\n").unwrap();
+    fs::write(
+        &exe,
+        "@echo off\r\necho ollama version is 1.0.1-and-longer\r\n",
+    )
+    .unwrap();
     assert_eq!(parse_ollama_version(&exe), "1.0.1-and-longer");
 }
 
@@ -2328,9 +2966,12 @@ fn live_a_real_server_is_awaited_and_a_second_one_on_its_port_dies_at_once() {
     let first = LiveServer::spawn(&binary, port, models.path());
 
     let started = Instant::now();
-    let outcome = wait_for_server(&first.slot, Duration::from_secs(30), Duration::from_millis(250), &mut |_| {
-        ping_ollama_quick_fresh(&endpoint).is_ok()
-    });
+    let outcome = wait_for_server(
+        &first.slot,
+        Duration::from_secs(30),
+        Duration::from_millis(250),
+        &mut |_| ping_ollama_quick_fresh(&endpoint).is_ok(),
+    );
     println!("first server: {:?} after {:?}", outcome, started.elapsed());
     assert_eq!(outcome, WaitOutcome::Ready);
 
@@ -2347,16 +2988,35 @@ fn live_a_real_server_is_awaited_and_a_second_one_on_its_port_dies_at_once() {
     // a second `ollama serve` on the same port: the old code waited the full 12 s for it
     let second = LiveServer::spawn(&binary, port, models.path());
     let started = Instant::now();
-    let outcome = wait_for_server(&second.slot, Duration::from_secs(12), Duration::from_millis(250), &mut |_| false);
-    println!("second server on the same port: {:?} after {:?}", outcome, started.elapsed());
-    assert!(matches!(outcome, WaitOutcome::Exited(Some(code)) if code != 0), "{:?}", outcome);
-    assert!(started.elapsed() < Duration::from_secs(8), "a dead start must not look like a slow one");
+    let outcome = wait_for_server(
+        &second.slot,
+        Duration::from_secs(12),
+        Duration::from_millis(250),
+        &mut |_| false,
+    );
+    println!(
+        "second server on the same port: {:?} after {:?}",
+        outcome,
+        started.elapsed()
+    );
+    assert!(
+        matches!(outcome, WaitOutcome::Exited(Some(code)) if code != 0),
+        "{:?}",
+        outcome
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "a dead start must not look like a slow one"
+    );
     assert!(describe_exit(Some(1)).contains("port"));
 
     // the first one is untouched by all this
     assert!(ping_ollama_quick_fresh(&endpoint).is_ok());
     first.stop();
-    assert!(wait_until(Duration::from_secs(10), || !endpoint_port_in_use(&endpoint)), "port released after stop");
+    assert!(
+        wait_until(Duration::from_secs(10), || !endpoint_port_in_use(&endpoint)),
+        "port released after stop"
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -2381,7 +3041,10 @@ fn live_a_foreign_program_on_the_port_is_detected_before_anything_is_spawned() {
 
     let reachable = runtime_endpoint_reachable(&endpoint);
     let in_use = endpoint_port_in_use(&endpoint);
-    println!("reachable as Ollama: {}, port in use: {}", reachable, in_use);
+    println!(
+        "reachable as Ollama: {}, port in use: {}",
+        reachable, in_use
+    );
     assert!(!reachable && in_use);
     assert_eq!(
         refine_spawn_plan(false, None, || endpoint_port_in_use(&endpoint)),
@@ -2392,15 +3055,29 @@ fn live_a_foreign_program_on_the_port_is_detected_before_anything_is_spawned() {
     let models = Scratch::new("live-models-blocked");
     let server = LiveServer::spawn(&binary, port, models.path());
     let started = Instant::now();
-    let outcome = wait_for_server(&server.slot, Duration::from_secs(12), Duration::from_millis(250), &mut |_| false);
-    println!("ollama serve on the foreign port: {:?} after {:?}", outcome, started.elapsed());
-    assert!(matches!(outcome, WaitOutcome::Exited(Some(code)) if code != 0), "{:?}", outcome);
+    let outcome = wait_for_server(
+        &server.slot,
+        Duration::from_secs(12),
+        Duration::from_millis(250),
+        &mut |_| false,
+    );
+    println!(
+        "ollama serve on the foreign port: {:?} after {:?}",
+        outcome,
+        started.elapsed()
+    );
+    assert!(
+        matches!(outcome, WaitOutcome::Exited(Some(code)) if code != 0),
+        "{:?}",
+        outcome
+    );
 }
 
 #[cfg(target_os = "windows")]
 #[test]
 #[ignore]
-fn live_a_real_archive_installs_through_the_whole_pipeline_and_a_running_version_cannot_be_replaced() {
+fn live_a_real_archive_installs_through_the_whole_pipeline_and_a_running_version_cannot_be_replaced(
+) {
     let Some(local) = std::env::var_os("LOCALAPPDATA") else {
         return;
     };
@@ -2428,12 +3105,26 @@ fn live_a_real_archive_installs_through_the_whole_pipeline_and_a_running_version
     let digest = sha256_reader(&mut file).expect("hash");
     println!("archive sha256 {}", digest);
     if let Some(metadata) = load_runtime_archive_metadata(&archive) {
-        assert!(metadata.sha256.eq_ignore_ascii_case(&digest), "cached archive matches its sidecar");
+        assert!(
+            metadata.sha256.eq_ignore_ascii_case(&digest),
+            "cached archive matches its sidecar"
+        );
     }
     let started = Instant::now();
-    let binary = install_archive(file, root.path(), version, MAX_RUNTIME_EXTRACTED_BYTES, &verify, progress)
-        .expect("real install");
-    println!("installed in {:.1}s -> {}", started.elapsed().as_secs_f32(), binary.display());
+    let binary = install_archive(
+        file,
+        root.path(),
+        version,
+        MAX_RUNTIME_EXTRACTED_BYTES,
+        &verify,
+        progress,
+    )
+    .expect("real install");
+    println!(
+        "installed in {:.1}s -> {}",
+        started.elapsed().as_secs_f32(),
+        binary.display()
+    );
     assert_eq!(binary, root.path().join(version).join("ollama.exe"));
     assert_eq!(dot_entries(root.path()), Vec::<String>::new());
     assert_eq!(parse_ollama_version(&binary), version);
@@ -2442,9 +3133,12 @@ fn live_a_real_archive_installs_through_the_whole_pipeline_and_a_running_version
     // 2. serve from it, then try to install the same version over the running one
     let models = Scratch::new("live-models-install");
     let server = LiveServer::spawn(&binary, port, models.path());
-    let outcome = wait_for_server(&server.slot, Duration::from_secs(40), Duration::from_millis(250), &mut |_| {
-        ping_ollama_quick_fresh(&endpoint).is_ok()
-    });
+    let outcome = wait_for_server(
+        &server.slot,
+        Duration::from_secs(40),
+        Duration::from_millis(250),
+        &mut |_| ping_ollama_quick_fresh(&endpoint).is_ok(),
+    );
     assert_eq!(outcome, WaitOutcome::Ready);
     let running = query_running_ollama_version(&endpoint).expect("version");
     assert_eq!(
@@ -2455,21 +3149,48 @@ fn live_a_real_archive_installs_through_the_whole_pipeline_and_a_running_version
 
     let file = open_archive_locked(&archive).expect("open archive again");
     let started = Instant::now();
-    let error = install_archive(file, root.path(), version, MAX_RUNTIME_EXTRACTED_BYTES, &verify, progress)
-        .expect_err("the serving runtime cannot be replaced");
-    println!("replace while serving: {} (after {:.1}s)", error, started.elapsed().as_secs_f32());
+    let error = install_archive(
+        file,
+        root.path(),
+        version,
+        MAX_RUNTIME_EXTRACTED_BYTES,
+        &verify,
+        progress,
+    )
+    .expect_err("the serving runtime cannot be replaced");
+    println!(
+        "replace while serving: {} (after {:.1}s)",
+        error,
+        started.elapsed().as_secs_f32()
+    );
     assert!(error.contains("is in use"), "{}", error);
-    assert_eq!(dot_entries(root.path()), Vec::<String>::new(), "staging removed after the refusal");
-    assert!(ping_ollama_quick_fresh(&endpoint).is_ok(), "the serving runtime is untouched");
+    assert_eq!(
+        dot_entries(root.path()),
+        Vec::<String>::new(),
+        "staging removed after the refusal"
+    );
+    assert!(
+        ping_ollama_quick_fresh(&endpoint).is_ok(),
+        "the serving runtime is untouched"
+    );
     assert!(binary.is_file());
 
     // 3. after it stopped, the same install goes through
     server.stop();
-    assert!(wait_until(Duration::from_secs(10), || !endpoint_port_in_use(&endpoint)));
+    assert!(wait_until(Duration::from_secs(10), || {
+        !endpoint_port_in_use(&endpoint)
+    }));
     std::thread::sleep(Duration::from_millis(500));
     let file = open_archive_locked(&archive).expect("open archive a third time");
-    install_archive(file, root.path(), version, MAX_RUNTIME_EXTRACTED_BYTES, &verify, progress)
-        .expect("works once it stopped");
+    install_archive(
+        file,
+        root.path(),
+        version,
+        MAX_RUNTIME_EXTRACTED_BYTES,
+        &verify,
+        progress,
+    )
+    .expect("works once it stopped");
     assert_eq!(dot_entries(root.path()), Vec::<String>::new());
     assert_eq!(parse_ollama_version(&binary), version);
 }
@@ -2481,7 +3202,9 @@ fn live_a_real_archive_installs_through_the_whole_pipeline_and_a_running_version
 #[cfg(target_os = "windows")]
 fn running_stand_in(dir: &Path) -> std::process::Child {
     fs::create_dir_all(dir).unwrap();
-    let system_root = std::env::var_os("SystemRoot").map(PathBuf::from).expect("SystemRoot");
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .expect("SystemRoot");
     let exe = dir.join("ollama.exe");
     fs::copy(system_root.join("System32").join("PING.EXE"), &exe).expect("copy ping.exe");
     Command::new(&exe)
@@ -2500,7 +3223,9 @@ fn files_that_nobody_runs_are_not_in_use() {
     assert!(!executable_in_use(&scratch.path().join("missing.exe")));
     assert!(!executable_in_use(scratch.path()));
     marker(&scratch.path().join("0.40.13"), "plain file");
-    assert!(!executable_in_use(&scratch.path().join("0.40.13").join("ollama.exe")));
+    assert!(!executable_in_use(
+        &scratch.path().join("0.40.13").join("ollama.exe")
+    ));
     // and the probe wrote nothing
     assert_eq!(read_marker(&scratch.path().join("0.40.13")), "plain file");
 }
@@ -2516,7 +3241,10 @@ fn a_running_ollama_exe_is_detected_and_its_folder_survives_an_install_attempt()
     let target = root.path().join("0.40.13");
     let mut running = running_stand_in(&target);
     std::thread::sleep(Duration::from_millis(300));
-    assert!(executable_in_use(&target.join("ollama.exe")), "the probe sees the running image");
+    assert!(
+        executable_in_use(&target.join("ollama.exe")),
+        "the probe sees the running image"
+    );
 
     let error = install_bytes(
         zip_bytes(&[("ollama.exe", b"new"), ("lib/a.dll", b"dll")]),
@@ -2526,10 +3254,24 @@ fn a_running_ollama_exe_is_detected_and_its_folder_survives_an_install_attempt()
     )
     .expect_err("a running runtime must not be replaced");
 
-    assert!(error.contains("is in use and cannot be replaced"), "{}", error);
-    assert!(target.join("ollama.exe").is_file(), "the running exe is still where it was");
-    assert_eq!(dot_entries(root.path()), Vec::<String>::new(), "refused before anything was unpacked");
-    assert!(running.try_wait().unwrap().is_none(), "the process was not disturbed");
+    assert!(
+        error.contains("is in use and cannot be replaced"),
+        "{}",
+        error
+    );
+    assert!(
+        target.join("ollama.exe").is_file(),
+        "the running exe is still where it was"
+    );
+    assert_eq!(
+        dot_entries(root.path()),
+        Vec::<String>::new(),
+        "refused before anything was unpacked"
+    );
+    assert!(
+        running.try_wait().unwrap().is_none(),
+        "the process was not disturbed"
+    );
 
     // swap_runtime_dir alone (the second line of defence) refuses too
     let staging = root.path().join(".staging-0.40.13-1");
@@ -2541,10 +3283,17 @@ fn a_running_ollama_exe_is_detected_and_its_folder_survives_an_install_attempt()
 
     // once it stopped, replacing works
     kill_process_tree(&mut running);
-    assert!(wait_until(Duration::from_secs(5), || !executable_in_use(&target.join("ollama.exe"))));
+    assert!(wait_until(Duration::from_secs(5), || !executable_in_use(
+        &target.join("ollama.exe")
+    )));
     fs::remove_dir_all(&staging).unwrap();
-    install_bytes(zip_bytes(&[("ollama.exe", b"new")]), root.path(), "0.40.13", &|_| Ok(()))
-        .expect("replaceable after it stopped");
+    install_bytes(
+        zip_bytes(&[("ollama.exe", b"new")]),
+        root.path(),
+        "0.40.13",
+        &|_| Ok(()),
+    )
+    .expect("replaceable after it stopped");
     assert_eq!(read_marker(&target), "new");
 }
 
@@ -2561,7 +3310,12 @@ fn junction(link: &Path, target: &Path) {
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .expect("run mklink");
-    assert!(status.success(), "mklink /J {} {}", link.display(), target.display());
+    assert!(
+        status.success(),
+        "mklink /J {} {}",
+        link.display(),
+        target.display()
+    );
 }
 
 #[test]
@@ -2570,9 +3324,15 @@ fn the_exe_is_found_at_normal_depth_regardless_of_case() {
     let nested = root.path().join("a").join("b").join("c");
     fs::create_dir_all(&nested).unwrap();
     fs::write(nested.join("Ollama.EXE"), "x").unwrap();
-    assert_eq!(find_file_recursive(root.path(), "ollama.exe"), Some(nested.join("Ollama.EXE")));
+    assert_eq!(
+        find_file_recursive(root.path(), "ollama.exe"),
+        Some(nested.join("Ollama.EXE"))
+    );
     assert_eq!(find_file_recursive(root.path(), "other.exe"), None);
-    assert_eq!(find_file_recursive(&root.path().join("missing"), "ollama.exe"), None);
+    assert_eq!(
+        find_file_recursive(&root.path().join("missing"), "ollama.exe"),
+        None
+    );
 }
 
 #[test]
@@ -2584,7 +3344,11 @@ fn the_search_depth_is_capped() {
     }
     fs::create_dir_all(&deep).unwrap();
     fs::write(deep.join("ollama.exe"), "x").unwrap();
-    assert_eq!(find_file_recursive(root.path(), "ollama.exe"), None, "deeper than any runtime");
+    assert_eq!(
+        find_file_recursive(root.path(), "ollama.exe"),
+        None,
+        "deeper than any runtime"
+    );
 
     let allowed = root.path().join("ok");
     let mut at_cap = allowed.clone();
@@ -2623,11 +3387,18 @@ fn junction_cycles_in_a_runtime_folder_cannot_hang_the_scan() {
     println!("scan with junction cycles took {:?}", started.elapsed());
 
     assert_eq!(found, None);
-    assert!(scanned.is_empty(), "no runtime without an exe: {:?}", scanned);
+    assert!(
+        scanned.is_empty(),
+        "no runtime without an exe: {:?}",
+        scanned
+    );
 
     // the real exe is still found next to the cycles
     fs::write(runtime.join("ollama.exe"), "x").unwrap();
-    assert_eq!(find_file_recursive(&runtime, "ollama.exe"), Some(runtime.join("ollama.exe")));
+    assert_eq!(
+        find_file_recursive(&runtime, "ollama.exe"),
+        Some(runtime.join("ollama.exe"))
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -2639,7 +3410,11 @@ fn a_junction_to_another_folder_is_not_followed_but_the_folder_itself_may_be_one
     let runtime = root.path().join("0.40.13");
     fs::create_dir_all(&runtime).unwrap();
     junction(&runtime.join("linked"), elsewhere.path());
-    assert_eq!(find_file_recursive(&runtime, "ollama.exe"), None, "links inside are not followed");
+    assert_eq!(
+        find_file_recursive(&runtime, "ollama.exe"),
+        None,
+        "links inside are not followed"
+    );
 
     // a managed version folder that is itself a junction (runtime moved to another drive)
     let moved = root.path().join("0.40.7");
@@ -2658,10 +3433,47 @@ fn a_junction_to_another_folder_is_not_followed_but_the_folder_itself_may_be_one
 /// characters, in random order. Every parser of outside data must survive all of it.
 fn hostile_strings(count: usize) -> Vec<String> {
     const PIECES: &[&str] = &[
-        "a", "Z", "0", ":", "/", "\\", "-", "_", ".", "<", ">", "</", "<transcript>", "</transcript>",
-        "<think>", "</think>", "transcript", "ä", "ß", "日", "🦙", "\u{0}", "\u{feff}", " ", "\n", "\t",
-        "sha256-", "sha256:", "hf.co/", "trispr-backup-", "O=", "\"", ",", " 0.40.13", "v", "ollama version is ",
-        "client version is ", "hier ist ", "Sure", "=", "|",
+        "a",
+        "Z",
+        "0",
+        ":",
+        "/",
+        "\\",
+        "-",
+        "_",
+        ".",
+        "<",
+        ">",
+        "</",
+        "<transcript>",
+        "</transcript>",
+        "<think>",
+        "</think>",
+        "transcript",
+        "ä",
+        "ß",
+        "日",
+        "🦙",
+        "\u{0}",
+        "\u{feff}",
+        " ",
+        "\n",
+        "\t",
+        "sha256-",
+        "sha256:",
+        "hf.co/",
+        "trispr-backup-",
+        "O=",
+        "\"",
+        ",",
+        " 0.40.13",
+        "v",
+        "ollama version is ",
+        "client version is ",
+        "hier ist ",
+        "Sure",
+        "=",
+        "|",
     ];
     let mut state = 0x9E37_79B9_7F4A_7C15u64;
     let mut next = move || {
@@ -2680,7 +3492,6 @@ fn hostile_strings(count: usize) -> Vec<String> {
         .collect()
 }
 
-
 #[test]
 fn runtime_parsers_survive_hostile_text() {
     for text in hostile_strings(20_000) {
@@ -2696,7 +3507,10 @@ fn runtime_parsers_survive_hostile_text() {
         let _ = is_safe_runtime_version(&text);
         let _ = compare_runtime_versions_desc(&text, "0.40.13");
         let _ = infer_runtime_version_from_archive_path(Path::new(&text));
-        let _ = managed_runtime_version_of(Path::new("rt"), &Path::new("rt").join(&text).join("ollama.exe"));
+        let _ = managed_runtime_version_of(
+            Path::new("rt"),
+            &Path::new("rt").join(&text).join("ollama.exe"),
+        );
         let _ = checksum_entry_matches_file_name(&text, "ollama-windows-amd64.zip");
         let _ = select_major_line_versions(&[text.clone(), "v0.40.13".into()], 3);
         let _ = validate_runtime_download_url(&text, "0.40.13");
@@ -2745,17 +3559,24 @@ impl StartHost for LiveHost {
     }
     fn stop_managed_and_free_port(&mut self) -> bool {
         self.server.stop();
-        wait_until(Duration::from_secs(10), || !endpoint_port_in_use(&self.endpoint()))
+        wait_until(Duration::from_secs(10), || {
+            !endpoint_port_in_use(&self.endpoint())
+        })
     }
     fn reclaim_stale_port(&mut self) -> bool {
         // like production: the pid file of the crashed session names the leftover
         if let Some(pid_file) = &self.pid_file {
             kill_stale_ollama_pid_in(pid_file);
         }
-        wait_until(Duration::from_secs(5), || !endpoint_port_in_use(&self.endpoint()))
+        wait_until(Duration::from_secs(5), || {
+            !endpoint_port_in_use(&self.endpoint())
+        })
     }
     fn await_starting_server(&mut self) -> LaunchOutcome {
-        LaunchOutcome::Failed { stage: "stopped", message: "not used here".into() }
+        LaunchOutcome::Failed {
+            stage: "stopped",
+            message: "not used here".into(),
+        }
     }
     fn launch(&mut self, binary: &Path) -> LaunchOutcome {
         self.server.stop();
@@ -2772,7 +3593,10 @@ impl StartHost for LiveHost {
         let child = match child {
             Ok(child) => child,
             Err(e) => {
-                return LaunchOutcome::Failed { stage: "spawn_failed", message: e.to_string() }
+                return LaunchOutcome::Failed {
+                    stage: "spawn_failed",
+                    message: e.to_string(),
+                }
             }
         };
         let pid = child.id();
@@ -2780,13 +3604,28 @@ impl StartHost for LiveHost {
         self.spawned_at = Some(Instant::now());
         let endpoint = self.endpoint();
         let started = Instant::now();
-        match wait_for_server(&self.server.slot, Duration::from_secs(30), Duration::from_millis(250), &mut |_| {
-            ping_ollama_quick_fresh(&endpoint).is_ok()
-        }) {
-            WaitOutcome::Ready => LaunchOutcome::Ready { pid, waited: started.elapsed() },
-            WaitOutcome::TimedOut => LaunchOutcome::Pending { pid, waited: started.elapsed() },
-            WaitOutcome::Exited(code) => LaunchOutcome::Failed { stage: "spawn_exited", message: describe_exit(code) },
-            WaitOutcome::Gone => LaunchOutcome::Failed { stage: "stopped", message: "stopped".into() },
+        match wait_for_server(
+            &self.server.slot,
+            Duration::from_secs(30),
+            Duration::from_millis(250),
+            &mut |_| ping_ollama_quick_fresh(&endpoint).is_ok(),
+        ) {
+            WaitOutcome::Ready => LaunchOutcome::Ready {
+                pid,
+                waited: started.elapsed(),
+            },
+            WaitOutcome::TimedOut => LaunchOutcome::Pending {
+                pid,
+                waited: started.elapsed(),
+            },
+            WaitOutcome::Exited(code) => LaunchOutcome::Failed {
+                stage: "spawn_exited",
+                message: describe_exit(code),
+            },
+            WaitOutcome::Gone => LaunchOutcome::Failed {
+                stage: "stopped",
+                message: "stopped".into(),
+            },
         }
     }
 }
@@ -2809,7 +3648,9 @@ fn live_a_failing_version_switch_brings_the_previous_real_server_back() {
     let mut host = LiveHost {
         port,
         models: models.path().to_path_buf(),
-        server: LiveServer { slot: Mutex::new(None) },
+        server: LiveServer {
+            slot: Mutex::new(None),
+        },
         spawned_at: None,
         pid_file: None,
     };
@@ -2818,7 +3659,10 @@ fn live_a_failing_version_switch_brings_the_previous_real_server_back() {
     let first = host.launch(&real);
     println!("old runtime: {:?}", first);
     assert!(matches!(first, LaunchOutcome::Ready { .. }), "{:?}", first);
-    assert_eq!(host.running_version().as_deref(), Some(real_version.as_str()));
+    assert_eq!(
+        host.running_version().as_deref(),
+        Some(real_version.as_str())
+    );
 
     // 2. the user selects "9.9.9", whose binary dies at once
     let started = Instant::now();
@@ -2826,14 +3670,31 @@ fn live_a_failing_version_switch_brings_the_previous_real_server_back() {
         assert_eq!(running, real_version, "the version that is being replaced");
         Some(real.clone())
     });
-    println!("switch resolution after {:?}: {:?}", started.elapsed(), resolution);
+    println!(
+        "switch resolution after {:?}: {:?}",
+        started.elapsed(),
+        resolution
+    );
 
     match resolution {
-        StartResolution::FellBack { outcome, binary, previous_version, message } => {
-            assert!(matches!(outcome, LaunchOutcome::Ready { .. }), "{:?}", outcome);
+        StartResolution::FellBack {
+            outcome,
+            binary,
+            previous_version,
+            message,
+        } => {
+            assert!(
+                matches!(outcome, LaunchOutcome::Ready { .. }),
+                "{:?}",
+                outcome
+            );
             assert_eq!(binary, real);
             assert_eq!(previous_version, real_version);
-            assert!(message.contains("Could not start Ollama 9.9.9"), "{}", message);
+            assert!(
+                message.contains("Could not start Ollama 9.9.9"),
+                "{}",
+                message
+            );
             assert!(message.contains("exit code 1"), "{}", message);
             assert!(message.contains("started again"), "{}", message);
         }
@@ -2841,8 +3702,15 @@ fn live_a_failing_version_switch_brings_the_previous_real_server_back() {
     }
     // 3. the user has a working Ollama again, the old version
     assert!(host.endpoint_reachable(), "a server answers again");
-    assert_eq!(host.running_version().as_deref(), Some(real_version.as_str()));
-    assert!(started.elapsed() < Duration::from_secs(45), "{:?}", started.elapsed());
+    assert_eq!(
+        host.running_version().as_deref(),
+        Some(real_version.as_str())
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(45),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[cfg(target_os = "windows")]
@@ -2861,14 +3729,18 @@ fn live_pid_file_reclaims_a_leftover_ollama_and_a_foreign_program_is_never_touch
     // 1. A real `ollama serve` of "the crashed session": running, its pid in the pid file, but
     //    in no slot of this process.
     let leftover = LiveServer::spawn(&real, port, models.path());
-    assert!(wait_until(Duration::from_secs(30), || ping_ollama_quick_fresh(&endpoint).is_ok()));
+    assert!(wait_until(Duration::from_secs(30), || {
+        ping_ollama_quick_fresh(&endpoint).is_ok()
+    }));
     let leftover_pid = leftover.slot.lock().unwrap().as_ref().unwrap().id();
     let pid_file = scratch.path().join("ollama_managed.pid");
     fs::write(&pid_file, leftover_pid.to_string()).unwrap();
     let mut host = LiveHost {
         port,
         models: models.path().to_path_buf(),
-        server: LiveServer { slot: Mutex::new(None) },
+        server: LiveServer {
+            slot: Mutex::new(None),
+        },
         spawned_at: None,
         pid_file: Some(pid_file.clone()),
     };
@@ -2876,11 +3748,16 @@ fn live_pid_file_reclaims_a_leftover_ollama_and_a_foreign_program_is_never_touch
     // 2. It still answers: the new session leaves it alone.
     let resolution = resolve_start(&mut host, &real, &parse_ollama_version(&real), &|_| None);
     println!("leftover that answers: {:?}", resolution);
-    assert!(matches!(resolution, StartResolution::AlreadyRunning { .. }), "{:?}", resolution);
+    assert!(
+        matches!(resolution, StartResolution::AlreadyRunning { .. }),
+        "{:?}",
+        resolution
+    );
 
     // 3. A foreign program on another port, no pid file: reported, never killed.
     let stranger_port = port + 1;
-    let stranger = std::net::TcpListener::bind(("127.0.0.1", stranger_port)).expect("bind stranger port");
+    let stranger =
+        std::net::TcpListener::bind(("127.0.0.1", stranger_port)).expect("bind stranger port");
     let held: Arc<Mutex<Vec<std::net::TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
     let keep = held.clone();
     std::thread::spawn(move || {
@@ -2891,7 +3768,9 @@ fn live_pid_file_reclaims_a_leftover_ollama_and_a_foreign_program_is_never_touch
     let mut other = LiveHost {
         port: stranger_port,
         models: models.path().to_path_buf(),
-        server: LiveServer { slot: Mutex::new(None) },
+        server: LiveServer {
+            slot: Mutex::new(None),
+        },
         spawned_at: None,
         pid_file: None,
     };
@@ -2899,13 +3778,22 @@ fn live_pid_file_reclaims_a_leftover_ollama_and_a_foreign_program_is_never_touch
     println!("foreign program on the port: {:?}", resolution);
     match resolution {
         StartResolution::Failed { stage, .. } => assert_eq!(stage, "port_in_use"),
-        other => panic!("a foreign program must be reported, not killed: {:?}", other),
+        other => panic!(
+            "a foreign program must be reported, not killed: {:?}",
+            other
+        ),
     }
-    assert!(ping_ollama_quick_fresh(&endpoint).is_ok(), "the leftover was not touched by that");
+    assert!(
+        ping_ollama_quick_fresh(&endpoint).is_ok(),
+        "the leftover was not touched by that"
+    );
 
     // 4. The pid file clears the real leftover away (this is what `reclaim_stale_port` runs
     //    before a hung server's port counts as foreign).
-    assert!(host.reclaim_stale_port(), "the port is free after the pid-file kill");
+    assert!(
+        host.reclaim_stale_port(),
+        "the port is free after the pid-file kill"
+    );
     assert!(!endpoint_port_in_use(&endpoint));
     assert!(!pid_file.exists());
 }

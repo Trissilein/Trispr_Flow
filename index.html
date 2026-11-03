@@ -1369,6 +1369,16 @@
                         <div id="refinement-pipeline-live" class="field-hint refinement-pipeline-live" aria-live="polite">
                           Awaiting next transcription job.
                         </div>
+
+                        <div id="refinement-model-legend" class="field-hint refinement-model-legend" aria-label="Model status colors">
+                          <strong>Model status colors</strong>
+                          <ul>
+                            <li><span class="legend-swatch legend-swatch--cold" aria-hidden="true"></span>Gray: model not loaded. Dictation is pasted raw and the model is pre-warmed. Also applies after 12 min without a successful refinement.</li>
+                            <li><span class="legend-swatch legend-swatch--loading" aria-hidden="true"></span>Yellow: model is loading.</li>
+                            <li><span class="legend-swatch legend-swatch--warm" aria-hidden="true"></span>Green (main window) / your overlay color: model ready, refinement active.</li>
+                            <li><span class="legend-swatch legend-swatch--refining" aria-hidden="true"></span>Blue pulse (overlay): refinement is running right now.</li>
+                          </ul>
+                        </div>
                       </div>
 
                       <details class="expander span-2 refinement-pipeline-advanced" data-expert-only="true">

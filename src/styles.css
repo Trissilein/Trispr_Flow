@@ -525,6 +525,31 @@ h1 {
   box-shadow: 0 0 0 4px rgba(var(--status-success-rgb), 0.25);
 }
 
+.refinement-model-legend ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.refinement-model-legend li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.legend-swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.legend-swatch--loading { background: var(--status-warning); }
+.legend-swatch--warm { background: var(--status-success); }
+.legend-swatch--refining { background: #6ec8ff; }
+
 @keyframes model-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }

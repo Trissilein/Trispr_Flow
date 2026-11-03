@@ -138,6 +138,14 @@ function renderFeedbackIndicators() {
             ? "refining"
             : `model-${engineState}`;
     }
+    if (dom.ollamaModelDot) {
+      dom.ollamaModelDot.title = {
+        cold: "Gray: model not loaded. The next dictation is pasted raw while the model warms up.",
+        loading: "Yellow: model is loading. Dictation is pasted raw until it is ready.",
+        warm: "Green: model is loaded and ready. Refinement is applied (resets to gray after 12 min without a successful refinement).",
+        refining: "Refining: the model is processing a transcript right now.",
+      }[engineState];
+    }
     if (dom.engineRefineLabel) {
       dom.engineRefineLabel.textContent = {
         cold: "Cold",

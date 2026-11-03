@@ -328,14 +328,7 @@ async function refreshStartupStatusFromBackend(): Promise<void> {
   } catch (error) {
     console.warn("get_startup_status failed", error);
   }
-  try {
-    const modelState = await invoke<string>("get_ollama_model_state");
-    if (modelState === "cold" || modelState === "loading" || modelState === "warm") {
-      setOllamaModelState(modelState);
-    }
-  } catch (error) {
-    console.warn("get_ollama_model_state failed", error);
-  }
+  // Ollama model state arrives via the "ollama:model-state" event; no getter command exists.
 }
 
 async function sendFrontendHeartbeat(source: "startup" | "interval"): Promise<void> {

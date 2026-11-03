@@ -34,11 +34,14 @@ const REFINEMENT_WATCHDOG_POLL_MS: u64 = 1_000;
 const REFINEMENT_PASTE_TIMEOUT_MS: u64 = 26_000; // 1s above backend timeout (25s) so backend always responds first
 const REFINEMENT_COLD_PASTE_TIMEOUT_MS: u64 = 30_000;
 const REFINEMENT_COLD_PASTE_MAX_AGE_MS: u64 = 12 * 60_000;
+const REFINEMENT_STALE_WATCHER_STEP_MS: u64 = 30_000;
 const OVERLAY_EMIT_INTERVAL_MS: u64 = 33; // ~30 FPS for smoother overlay motion
 const PTT_VAD_TAIL_MS: u64 = 150;
 const PTT_HOT_WATCHDOG_INTERVAL: Duration = Duration::from_secs(3);
 static TRANSCRIPTION_JOB_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static PTT_HOT_WATCHDOG_STARTED: AtomicBool = AtomicBool::new(false);
+static REFINEMENT_STALE_WATCHER_RUNNING: AtomicBool = AtomicBool::new(false);
+static OLLAMA_INDICATOR_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct AudioDevice {
@@ -1576,28 +1579,9 @@ fn refinement_paste_timeout_ms(app_handle: &AppHandle, settings: &Settings) -> (
 
     let state = app_handle.state::<AppState>();
     let startup_status = crate::startup_status_snapshot(state.inner());
-    let last_success_ms = state.refinement_last_success_ms.load(Ordering::SeqCst);
-    let last_success_model = state
-        .refinement_last_success_model
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    let current_model = settings.ai_fallback.model.trim().to_ascii_lowercase();
-    let model_matches = last_success_model
-        .as_deref()
-        .map(|model| model.trim().eq_ignore_ascii_case(&current_model))
-        .unwrap_or(false);
-    let now_ms = crate::util::now_ms();
-    let last_success_age_ms = if last_success_ms == 0 {
-        u64::MAX
-    } else {
-        now_ms.saturating_sub(last_success_ms)
-    };
     let cold_start = !startup_status.ollama_ready
         || startup_status.ollama_starting
-        || last_success_ms == 0
-        || !model_matches
-        || last_success_age_ms >= REFINEMENT_COLD_PASTE_MAX_AGE_MS;
+        || refinement_success_is_stale(state.inner(), &settings.ai_fallback.model);
     (
         if cold_start {
             REFINEMENT_COLD_PASTE_TIMEOUT_MS
@@ -1606,6 +1590,136 @@ fn refinement_paste_timeout_ms(app_handle: &AppHandle, settings: &Settings) -> (
         },
         cold_start,
     )
+}
+
+/// True when the next dictation counts as a cold start: no refinement has
+/// succeeded yet, the model changed since, or the last success is too old.
+/// The paste policy and the overlay colour share this rule. The live gates
+/// (`gpu_busy`, Ollama's `/api/ps`, runtime starting) stay separate and can
+/// still send a dictation down the raw path.
+fn refinement_success_is_stale(state: &AppState, model: &str) -> bool {
+    let last_success_model = state
+        .refinement_last_success_model
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    is_refinement_success_stale(
+        state.refinement_last_success_ms.load(Ordering::SeqCst),
+        last_success_model.as_deref(),
+        model,
+        crate::util::now_ms(),
+    )
+}
+
+fn is_refinement_success_stale(
+    last_success_ms: u64,
+    last_success_model: Option<&str>,
+    current_model: &str,
+    now_ms: u64,
+) -> bool {
+    if last_success_ms == 0 {
+        return true;
+    }
+    let model_matches = last_success_model
+        .map(|last| last.trim().eq_ignore_ascii_case(current_model.trim()))
+        .unwrap_or(false);
+    let age_ms = now_ms.saturating_sub(last_success_ms);
+    !model_matches || age_ms >= REFINEMENT_COLD_PASTE_MAX_AGE_MS
+}
+
+fn configured_refinement_model(state: &AppState) -> String {
+    state
+        .settings
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .ai_fallback
+        .model
+        .clone()
+}
+
+/// Colours the overlay for a model that is loaded in Ollama: Warm only while the
+/// paste policy would refine the next dictation, grey otherwise. The rule is
+/// evaluated under a lock, so a late "grey" write from the watcher can never
+/// land after the "warm" write of a refinement that just succeeded.
+fn set_overlay_for_loaded_model(app_handle: &AppHandle) {
+    let _guard = OLLAMA_INDICATOR_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let state = app_handle.state::<AppState>();
+    let stale =
+        refinement_success_is_stale(state.inner(), &configured_refinement_model(state.inner()));
+    crate::overlay::update_overlay_ollama_state(
+        app_handle,
+        if stale {
+            crate::overlay::OllamaModelState::Cold
+        } else {
+            crate::overlay::OllamaModelState::Warm
+        },
+    );
+}
+
+/// After a settings save: when the configured model differs from the one that
+/// last refined successfully, the new model is not warm. Grey the overlay and
+/// let the next PTT press pre-warm it.
+pub(crate) fn sync_overlay_after_settings_change(app_handle: &AppHandle) {
+    let state = app_handle.state::<AppState>();
+    let model = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if settings.ai_fallback.provider != "ollama" || !settings.ai_fallback.enabled {
+            return;
+        }
+        settings.ai_fallback.model.clone()
+    };
+    let last_model = state
+        .refinement_last_success_model
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let changed = last_model
+        .as_deref()
+        .is_some_and(|last| !last.trim().eq_ignore_ascii_case(model.trim()));
+    if !changed {
+        return;
+    }
+    let _guard = OLLAMA_INDICATOR_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    state.ollama_model_warm.store(false, Ordering::SeqCst);
+    crate::overlay::update_overlay_ollama_state(app_handle, crate::overlay::OllamaModelState::Cold);
+}
+
+/// Turns the overlay grey once the last successful refinement is old enough
+/// for the paste policy to treat the next dictation as cold. The model stays
+/// loaded; only the indicator changes. A single watcher thread serves all
+/// dictations. It sleeps in short steps so a system standby, which the sleep
+/// timer does not count, cannot delay the switch by the full interval.
+fn ensure_refinement_stale_watcher(app_handle: &AppHandle) {
+    if REFINEMENT_STALE_WATCHER_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app_handle.clone();
+    crate::util::spawn_guarded("refinement_stale_indicator", move || loop {
+        let state = app.state::<AppState>();
+        let last_success_ms = state.refinement_last_success_ms.load(Ordering::SeqCst);
+        let age_ms = crate::util::now_ms().saturating_sub(last_success_ms);
+        if age_ms < REFINEMENT_COLD_PASTE_MAX_AGE_MS {
+            thread::sleep(Duration::from_millis(
+                (REFINEMENT_COLD_PASTE_MAX_AGE_MS - age_ms).min(REFINEMENT_STALE_WATCHER_STEP_MS),
+            ));
+            continue;
+        }
+        REFINEMENT_STALE_WATCHER_RUNNING.store(false, Ordering::SeqCst);
+        set_overlay_for_loaded_model(&app);
+        // A success may have landed while the flag was released.
+        let latest_ms = state.refinement_last_success_ms.load(Ordering::SeqCst);
+        if crate::util::now_ms().saturating_sub(latest_ms) < REFINEMENT_COLD_PASTE_MAX_AGE_MS {
+            ensure_refinement_stale_watcher(&app);
+        }
+        return;
+    });
 }
 
 fn next_transcription_job_id(source: &str) -> String {
@@ -1955,10 +2069,8 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         s.ollama_model_warm.store(true, Ordering::SeqCst);
                         s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
                     }
-                    crate::overlay::update_overlay_ollama_state(
-                        &app_handle,
-                        crate::overlay::OllamaModelState::Warm,
-                    );
+                    set_overlay_for_loaded_model(&app_handle);
+                    ensure_refinement_stale_watcher(&app_handle);
                     let tok_s = result.ollama_eval_ms.filter(|&ms| ms > 0).map(|ms| {
                         (result.usage.output_tokens as f64 / (ms as f64 / 1000.0) * 10.0).round()
                             / 10.0
@@ -2240,7 +2352,7 @@ pub(crate) fn mark_ollama_model_cold(app_handle: &AppHandle) {
     crate::overlay::update_overlay_ollama_state(app_handle, crate::overlay::OllamaModelState::Cold);
 }
 
-const OLLAMA_IDLE_RELEASE_MS: u64 = 14_400_000; // 4 hours — model stays warm for a full work session
+const OLLAMA_IDLE_RELEASE_MS: u64 = 3_600_000; // 1 hour — model stays loaded between dictations, VRAM is freed after an idle hour
 
 fn schedule_ollama_idle_release(app_handle: AppHandle, generation: u64, model: String) {
     if model.trim().is_empty() {
@@ -3416,10 +3528,9 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
                     let s = app_for_warmup.state::<AppState>();
                     s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
                     s.ollama_model_warm.store(true, Ordering::SeqCst);
-                    crate::overlay::update_overlay_ollama_state(
-                        &app_for_warmup,
-                        crate::overlay::OllamaModelState::Warm,
-                    );
+                    // Loaded is not enough for a red bar: the paste policy pastes
+                    // raw until a refinement has succeeded recently, so stay grey.
+                    set_overlay_for_loaded_model(&app_for_warmup);
                 }
                 Err(e) => {
                     tracing::warn!("[ollama.warmup] ptt pre-warm failed (non-fatal): {}", e);
@@ -3543,8 +3654,50 @@ pub(crate) fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> Resu
 
 #[cfg(test)]
 mod refinement_defer_policy_tests {
-    use super::{is_ollama_model_not_found_message, should_defer_paste_for_refinement_inner};
+    use super::{
+        is_ollama_model_not_found_message, is_refinement_success_stale,
+        should_defer_paste_for_refinement_inner, REFINEMENT_COLD_PASTE_MAX_AGE_MS,
+    };
     use crate::state::{Settings, AI_REFINEMENT_MODULE_ID};
+
+    const NOW_MS: u64 = 10_000_000;
+
+    #[test]
+    fn no_success_yet_is_stale() {
+        assert!(is_refinement_success_stale(0, None, "gemma4:e2b", NOW_MS));
+    }
+
+    #[test]
+    fn recent_success_with_same_model_is_fresh() {
+        let last = NOW_MS - (REFINEMENT_COLD_PASTE_MAX_AGE_MS - 1);
+        assert!(!is_refinement_success_stale(
+            last,
+            Some("Gemma4:E2B"),
+            "gemma4:e2b",
+            NOW_MS
+        ));
+    }
+
+    #[test]
+    fn success_at_the_age_limit_is_stale() {
+        let last = NOW_MS - REFINEMENT_COLD_PASTE_MAX_AGE_MS;
+        assert!(is_refinement_success_stale(
+            last,
+            Some("gemma4:e2b"),
+            "gemma4:e2b",
+            NOW_MS
+        ));
+    }
+
+    #[test]
+    fn model_change_makes_a_recent_success_stale() {
+        assert!(is_refinement_success_stale(
+            NOW_MS - 1_000,
+            Some("qwen3.5:4b"),
+            "gemma4:e2b",
+            NOW_MS
+        ));
+    }
 
     fn settings_for_policy(module_enabled: bool, setting_enabled: bool) -> Settings {
         let mut settings = Settings::default();

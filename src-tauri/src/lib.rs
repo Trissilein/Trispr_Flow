@@ -7,6 +7,7 @@ mod constants;
 mod continuous_dump;
 mod data_migration;
 mod errors;
+mod gpu_process_memory;
 mod history_partition;
 mod hotkeys;
 mod models;
@@ -1323,6 +1324,8 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
         });
     }
 
+    crate::audio::sync_overlay_after_settings_change(app);
+
     info!("[DIAG] save_settings_inner: emitting settings-changed");
     let _ = app.emit("settings-changed", settings.clone());
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
@@ -2175,26 +2178,25 @@ fn update_gpu_busy_gate(state: &crate::state::AppState, util_pct: Option<f64>) {
     }
 }
 
-#[tauri::command]
+// `async`: runs on the thread pool, not the main thread. The nvidia-smi spawn and the
+// per-process counter read together take about 90 ms every 2 s.
+#[tauri::command(async)]
 fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
-    let ollama_endpoint: Option<String> = {
+    let ollama_active = {
         let settings = state.settings.read().unwrap_or_else(|p| p.into_inner());
-        if settings.ai_fallback.provider == "ollama" {
-            Some(settings.providers.ollama.endpoint.clone())
-        } else {
-            None
-        }
+        settings.ai_fallback.provider == "ollama"
     };
 
     let mut stats = hardware_gpu_stats();
     update_gpu_busy_gate(state.inner(), stats.util_pct);
 
-    if let Some(endpoint) = ollama_endpoint {
-        let refine_bytes = crate::ai_fallback::provider::fetch_ollama_running_vram(&endpoint);
-        let refine_gb = refine_bytes.map(|b| b as f64 / (1024.0_f64.powi(3)));
-        stats.refine_vram_gb = refine_gb;
-        // Whisper ≈ total used minus OLLAMA model; clamp to 0 for measurement skew
-        stats.whisper_vram_gb = refine_gb.map(|r| (stats.vram_used_gb - r).max(0.0));
+    // Per-process numbers from the OS: Ollama's /api/ps under-reports Gemma
+    // models (about 0.3 GB against 3 to 4.5 GB really held by the runner).
+    if let Some(process_vram) = crate::gpu_process_memory::sample() {
+        stats.whisper_vram_gb = process_vram.whisper_gb;
+        if ollama_active {
+            stats.refine_vram_gb = process_vram.refine_gb;
+        }
     }
 
     stats

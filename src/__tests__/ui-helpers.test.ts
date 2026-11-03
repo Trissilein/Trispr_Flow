@@ -3,6 +3,7 @@ import type { ModelInfo } from "../types";
 import {
   formatProgress,
   formatSize,
+  formatVram,
   getModelDescription,
   dbToLevel,
   levelToDb,
@@ -12,6 +13,17 @@ import {
 } from "../ui-helpers";
 
 describe("ui-helpers", () => {
+  it("formatVram shows a dash for missing or negligible values", () => {
+    expect(formatVram(null)).toBe("—");
+    expect(formatVram(undefined)).toBe("—");
+    expect(formatVram(Number.NaN)).toBe("—");
+    expect(formatVram(0)).toBe("—");
+    expect(formatVram(0.0003)).toBe("—");
+    expect(formatVram(0.049)).toBe("—");
+    expect(formatVram(0.05)).toBe("0.1 GB");
+    expect(formatVram(5.64)).toBe("5.6 GB");
+  });
+
   it("formats model descriptions for known ids", () => {
     const model: ModelInfo = {
       id: "whisper-large-v3",

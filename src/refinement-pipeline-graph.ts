@@ -24,6 +24,12 @@ type PipelineJobState = {
 };
 
 const PIPELINE_TERMINAL_RESET_MS = 2200;
+const SKIPPED_MODEL_NOT_LOADED = "ollama_model_not_loaded";
+
+/** Error text (e.g. warm-up 404 "Model 'x' not found in Ollama") that says the model is not installed. */
+function isModelNotInstalledError(error: string): boolean {
+  return /404|not found|not installed|no such model/i.test(error);
+}
 
 const pipelineJobState: PipelineJobState = {
   jobId: "",
@@ -170,8 +176,8 @@ function updateLiveSummary(
     case "raw_emitted":
       dom.refinementPipelineLive.textContent = localAiPath && pipelineJobState.deferred
         ? `Job ${jobToken}: raw transcript ready, waiting for AI refinement${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`
-        : pipelineJobState.skippedReason === "ollama_model_not_loaded"
-          ? `Job ${jobToken}: model loading in background — raw pasted. Refinement activates on next dictation.`
+        : pipelineJobState.skippedReason === SKIPPED_MODEL_NOT_LOADED
+          ? `Job ${jobToken}: model not loaded — raw pasted.`
           : `Job ${jobToken}: raw/rule output path selected.`;
       break;
     case "refining":
@@ -182,7 +188,9 @@ function updateLiveSummary(
       dom.refinementPipelineLive.textContent = `Job ${jobToken}: refined output ready${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`;
       break;
     case "failed":
-      dom.refinementPipelineLive.textContent = `Job ${jobToken}: AI failed, raw fallback used${pipelineJobState.error ? ` (${pipelineJobState.error})` : ""}.`;
+      dom.refinementPipelineLive.textContent = isModelNotInstalledError(pipelineJobState.error)
+        ? `Job ${jobToken}: model not installed — raw pasted (${pipelineJobState.error}).`
+        : `Job ${jobToken}: AI failed, raw fallback used${pipelineJobState.error ? ` (${pipelineJobState.error})` : ""}.`;
       break;
     case "timed_out":
       dom.refinementPipelineLive.textContent = `Job ${jobToken}: AI timeout, raw fallback pasted.`;
@@ -217,6 +225,8 @@ export function renderRefinementPipelineGraph(): void {
     && !runtime.backgroundStarting;
   const aiWarming = localAiPath && (runtime.busy || runtime.backgroundStarting) && !runtime.healthy && !hasJob;
 
+  const gateEnabled = localAiPath;
+
   const transcribeState: NodeState = !hasJob
     ? "idle"
     : pipelineJobState.phase === "raw_emitted" || pipelineJobState.phase === "refining"
@@ -231,8 +241,15 @@ export function renderRefinementPipelineGraph(): void {
         : "success";
 
   const modelNotLoaded = hasJob
-    && pipelineJobState.skippedReason === "ollama_model_not_loaded"
+    && pipelineJobState.skippedReason === SKIPPED_MODEL_NOT_LOADED
     && pipelineJobState.phase === "raw_emitted";
+  // Gate skipped refinement (model not loaded): raw was pasted right away. The background
+  // warm-up may move the phase on to "refining", raw stays the pasted output until then.
+  const rawPastedModelNotLoaded = hasJob
+    && gateEnabled
+    && !pipelineJobState.deferred
+    && pipelineJobState.skippedReason === SKIPPED_MODEL_NOT_LOADED
+    && (pipelineJobState.phase === "raw_emitted" || pipelineJobState.phase === "refining");
 
   let aiState: NodeState = "idle";
   if (!localAiPath) {
@@ -255,7 +272,6 @@ export function renderRefinementPipelineGraph(): void {
     aiState = "active";
   }
 
-  const gateEnabled = localAiPath;
   const gateState: NodeState = !gateEnabled
     ? "bypassed"
     : !hasJob
@@ -280,6 +296,7 @@ export function renderRefinementPipelineGraph(): void {
     ? "idle"
     : pipelineJobState.phase === "failed"
       || pipelineJobState.phase === "timed_out"
+      || rawPastedModelNotLoaded
       || (!gateEnabled && pipelineJobState.phase !== "refined")
       ? "active"
       : "idle";
@@ -328,7 +345,9 @@ export function renderRefinementPipelineGraph(): void {
   const useGateRawFallback =
     hasJob
     && gateEnabled
-    && (pipelineJobState.phase === "failed" || pipelineJobState.phase === "timed_out");
+    && (pipelineJobState.phase === "failed"
+      || pipelineJobState.phase === "timed_out"
+      || rawPastedModelNotLoaded);
 
   setEdgeState("pipeline-edge-transcribe-rules", hasJob && rulesEnabled ? "active" : "muted");
   setEdgeState("pipeline-edge-transcribe-ai", useRulesBypassToAi ? "active" : "muted");

@@ -19,6 +19,12 @@ All files use **LF** line endings (enforced via `.gitattributes`). Never commit 
 - Tauri event listeners must be tracked and cleaned up (use `unlisten` pattern)
 - Settings are persisted via `invoke("save_settings")` which calls `apply_overlay_settings()` and emits `settings-changed`
 
+## Versioning
+
+- Every PR that changes app behavior or UI adds a line under `## [Unreleased]` in `CHANGELOG.md`.
+- When a work session ends with merged user-visible changes, cut a version: move `[Unreleased]` to `## [x.y.z] - <date>`, bump `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and the `trispr-flow` entry in `src-tauri/Cargo.lock`, plus the README badge and version table.
+- Patch for fixes (`node scripts/bump-version.mjs` bumps the patch in the three manifests), minor for removed or new features. Tagging and publishing a GitHub release stay a separate, explicit step.
+
 ## Caveman Mode
 
 - Use terse caveman prose for user-facing answers, status updates, and review comments.

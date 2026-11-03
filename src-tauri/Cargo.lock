@@ -4834,7 +4834,7 @@ dependencies = [
 
 [[package]]
 name = "trispr-flow"
-version = "0.8.4"
+version = "0.9.0"
 dependencies = [
  "arboard",
  "chrono",

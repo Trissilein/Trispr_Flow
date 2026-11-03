@@ -2,7 +2,7 @@
 
 > Offline-first dictation and system-audio transcription with local Ollama refinement.
 
-[![Version](https://img.shields.io/badge/version-0.8.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-planned-lightgrey?style=flat&logo=apple)](ROADMAP.md)
 [![Notices](https://img.shields.io/badge/license-notices-blue.svg)](THIRD_PARTY_NOTICES.md)
@@ -21,7 +21,7 @@ It is designed for local-first transcription and editing workflows:
 
 ## Current Release
 
-- Current app line: `v0.8.4`
+- Current app line: `v0.9.0`
 - Packaging: unified Windows installer flow (vulkan-only / cuda-lite / cuda-complete)
 - Current focus: **lean core** (dictation, Ollama refinement, history, vocabulary). The 2026-11-02 lean-down removed cloud providers, LM Studio/Oobabooga, TTS/Piper, video generation, the assistant, GDD/Confluence, task capture and benchmarks (see [CHANGELOG.md](CHANGELOG.md))
 
@@ -94,7 +94,8 @@ Installer build/upload shortcuts:
 | `v0.8.1` | Released    | CUDA multi-arch fat-binary, whisper-server build target    |
 | `v0.8.2` | Released    | CUDA runtime DLL bundling, ASR language controls           |
 | `v0.8.3` | Released    | CUDA 13 migration, runtime seed asset (GDD package, since removed) |
-| `v0.8.4` | In progress | GPU-load gate, Vulkan installer validation, lean-down, OLED theme |
+| `v0.8.4` | Not tagged  | GPU-load gate, Vulkan installer validation                 |
+| `v0.9.0` | Current     | Lean-down, OLED theme, per-process VRAM panel              |
 
 Canonical planning docs:
 - [ROADMAP.md](ROADMAP.md)

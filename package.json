@@ -1,7 +1,7 @@
 {
   "name": "trispr-flow",
   "private": true,
-  "version": "0.8.4",
+  "version": "0.9.0",
   "type": "module",
   "scripts": {
     "prepare": "git config core.hooksPath scripts/hooks || echo skipped",

@@ -1323,6 +1323,8 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
         });
     }
 
+    crate::audio::sync_overlay_after_settings_change(app);
+
     info!("[DIAG] save_settings_inner: emitting settings-changed");
     let _ = app.emit("settings-changed", settings.clone());
     let _ = app.emit("menu:update-mic", settings.capture_enabled);

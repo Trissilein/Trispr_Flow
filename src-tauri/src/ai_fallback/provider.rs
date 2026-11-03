@@ -270,21 +270,6 @@ fn parse_ollama_model_load_status(
     Some(OllamaModelLoadStatus { loaded, size_vram })
 }
 
-#[allow(dead_code)]
-fn parse_ollama_running_vram(json: &serde_json::Value) -> Option<u64> {
-    let models = json["models"].as_array()?;
-    if models.is_empty() {
-        return Some(0);
-    }
-
-    Some(
-        models
-            .iter()
-            .map(|entry| entry["size_vram"].as_u64().unwrap_or(0))
-            .sum(),
-    )
-}
-
 /// Return whether the configured Ollama model is currently loaded via /api/ps.
 /// `size_vram` is GPU/offload telemetry only; CPU-loaded models report 0.
 pub fn fetch_ollama_model_load_status(
@@ -305,29 +290,6 @@ pub fn fetch_ollama_model_load_status(
         };
         if let Some(status) = parse_ollama_model_load_status(&json, model) {
             return Some(status);
-        }
-    }
-    None
-}
-
-/// Sum the VRAM (bytes) of all currently loaded Ollama models via /api/ps.
-/// Returns None if Ollama is unreachable or the response cannot be parsed.
-#[allow(dead_code)]
-pub fn fetch_ollama_running_vram(endpoint: &str) -> Option<u64> {
-    let agent = ureq::builder()
-        .timeout_connect(Duration::from_millis(500))
-        .timeout_read(Duration::from_millis(750))
-        .build();
-    for candidate in ollama_endpoint_candidates(endpoint) {
-        let url = format!("{}/api/ps", candidate);
-        let Ok(resp) = agent.get(&url).call() else {
-            continue;
-        };
-        let Ok(json) = resp.into_json::<serde_json::Value>() else {
-            continue;
-        };
-        if let Some(size_vram) = parse_ollama_running_vram(&json) {
-            return Some(size_vram);
         }
     }
     None
@@ -2110,19 +2072,6 @@ mod tests {
 
         assert!(!status.loaded);
         assert_eq!(status.size_vram, 0);
-    }
-
-    #[test]
-    fn ollama_ps_running_vram_sums_all_loaded_models() {
-        let json = serde_json::json!({
-            "models": [
-                { "name": "qwen3.5:4b", "size_vram": 1_000_u64 },
-                { "name": "other:latest", "size_vram": 2_500_u64 },
-                { "name": "cpu:latest" }
-            ]
-        });
-
-        assert_eq!(parse_ollama_running_vram(&json), Some(3_500));
     }
 
     // --- Ollama: unreachable endpoint returns empty model list (no panic) ---

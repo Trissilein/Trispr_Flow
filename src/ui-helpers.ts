@@ -39,8 +39,9 @@ export function formatPresetLabel(profile: string | undefined | null): string {
 }
 
 // Format a VRAM value in GB for display, e.g. 5.6 → "5.6 GB".
+// Missing or negligible values (< 0.05 GB, e.g. an idle process) render as "—" instead of "0.0 GB".
 export function formatVram(gb: number | null | undefined): string {
-  if (gb === null || gb === undefined || Number.isNaN(gb)) return "—";
+  if (gb === null || gb === undefined || Number.isNaN(gb) || gb < 0.05) return "—";
   return `${gb.toFixed(1)} GB`;
 }
 

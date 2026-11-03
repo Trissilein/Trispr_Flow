@@ -3399,6 +3399,9 @@ fn verify_authenticode_signer_timed(
         "-Command",
         script,
     ])
+    // A PSModulePath inherited from PowerShell 7 points Windows PowerShell 5.1 at modules it cannot load,
+    // so Get-AuthenticodeSignature yields an empty status. Let it rebuild its own default.
+    .env_remove("PSModulePath")
     .env(SIGNATURE_TARGET_ENV, binary)
     .creation_flags(CREATE_NO_WINDOW);
     let output = match run_with_timeout(&mut cmd, timeout) {

@@ -6,7 +6,7 @@ This file is the canonical source for priorities and execution order. Block IDs 
 
 ## Snapshot
 
-- **Released:** `v0.7.0` to `v0.7.5`, `v0.8.0` to `v0.8.3`; `v0.8.4` in progress.
+- **Released:** `v0.7.0` to `v0.7.5`, `v0.8.0` to `v0.8.3`; `v0.8.4` not tagged; `v0.9.0` current.
 - **Current phase:** lean core. Dictation (whisper.cpp, PTT, overlay), Ollama refinement, history, vocabulary, settings, hotkeys, paste.
 - **Removed 2026-11-02:** cloud providers, LM Studio/Oobabooga, TTS/Piper, video generation, vision, benchmarks, assistant (incl. Presence window and agent phases), GDD/Confluence, task capture.
 - **Active block:** A (release gate), now scoped to Whisper latency and the installers.

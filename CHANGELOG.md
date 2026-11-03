@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-03
+
+### Fixed / Changed — after the lean-down (2026-11-03)
+
+- **Refinement indicator follows the paste policy** (#59): the indicator turns grey after 12 minutes without a successful refinement and releases the model after 1 hour idle; the next dictation pastes raw and prewarms the model.
+- **Per-process VRAM panel** (#59): reads Windows per-process GPU counters instead of Ollama `/api/ps`, shows "—" instead of "0.0 GB" when idle, adds a color legend, a model tooltip and a Raw node in the pipeline graph.
+- **Authenticode probe under PowerShell 7** (#58): `PSModulePath` is reset for the signature check, so an empty status no longer fails the runtime verification. `cargo fmt` over the whole crate.
+- **Local runtime badge** (#60): reads "Local • Private" instead of "Offline • Private", because expanding a model card fetches details from ollama.com or huggingface.co.
+
 ### Removed / Changed — lean-down (2026-11-02)
 
 - **Slimmer app**: Trispr Flow is back to its core, dictation (whisper.cpp, PTT, overlay), Ollama refinement, history, vocabulary, settings, hotkeys and paste.

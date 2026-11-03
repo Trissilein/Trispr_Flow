@@ -920,9 +920,7 @@ fn candidate_from_release_json(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| value.to_string()),
-        release_notes_summary: summarize_release_notes(
-            item.get("body").and_then(|v| v.as_str()),
-        ),
+        release_notes_summary: summarize_release_notes(item.get("body").and_then(|v| v.as_str())),
         released_at: item
             .get("published_at")
             .and_then(|v| v.as_str())
@@ -1526,7 +1524,9 @@ fn parse_ollama_version(binary_path: &Path) -> String {
 fn probe_binary_version(binary_path: &Path, timeout: Duration) -> String {
     // Point the client at a dead port so it never reports a running server's version.
     let mut version_cmd = Command::new(binary_path);
-    version_cmd.arg("--version").env("OLLAMA_HOST", "127.0.0.1:1");
+    version_cmd
+        .arg("--version")
+        .env("OLLAMA_HOST", "127.0.0.1:1");
     #[cfg(target_os = "windows")]
     {
         version_cmd.creation_flags(CREATE_NO_WINDOW);
@@ -1680,9 +1680,8 @@ fn detect_runtime_in(
     let configured_binary = (!configured.is_empty())
         .then(|| PathBuf::from(configured))
         .filter(|path| path.exists());
-    let path = configured_binary.or_else(|| {
-        managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings))
-    })?;
+    let path = configured_binary
+        .or_else(|| managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings)))?;
     let source = MANAGED_RUNTIME_SOURCE.to_string();
     let version = detect_runtime_version_hint(settings, &source, &path, managed_root);
     Some((source, path, version))
@@ -1782,7 +1781,9 @@ fn select_runtime_binary_in(
             return Ok((path, source));
         }
     }
-    if let Some(managed) = managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings)) {
+    if let Some(managed) =
+        managed_root.and_then(|root| find_managed_runtime_binary_in(root, settings))
+    {
         return Ok((managed, source));
     }
     Err(
@@ -1925,9 +1926,9 @@ fn endpoint_port_in_use(endpoint: &str) -> bool {
     let Ok(addrs) = host_port.to_socket_addrs() else {
         return false;
     };
-    addrs.into_iter().any(|addr| {
-        std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
-    })
+    addrs
+        .into_iter()
+        .any(|addr| std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok())
 }
 
 /// Version reported by the server that is actually answering on `endpoint`.
@@ -2098,7 +2099,8 @@ fn build_version_list(
         .map(scan_installed_runtime_versions)
         .unwrap_or_default();
     let is_installed = |version: &str| {
-        (!settings_version.is_empty() && settings_version == version) || on_disk.contains_key(version)
+        (!settings_version.is_empty() && settings_version == version)
+            || on_disk.contains_key(version)
     };
     let installed_at = |version: &str| on_disk.get(version).copied().filter(|ms| *ms > 0);
 
@@ -2775,7 +2777,12 @@ fn download_runtime_archive(
         .get(&manifest.url)
         .set("User-Agent", "TrisprFlow/RuntimeInstaller")
         .call()
-        .map_err(|e| format!("Failed to download runtime archive: {}", describe_download_error(&e)))?;
+        .map_err(|e| {
+            format!(
+                "Failed to download runtime archive: {}",
+                describe_download_error(&e)
+            )
+        })?;
 
     let total = response
         .header("Content-Length")
@@ -3591,8 +3598,8 @@ fn install_ollama_runtime_impl(
     )?;
 
     // One locked handle for hashing AND unpacking: the archive cannot be swapped in between.
-    let mut archive_file =
-        open_archive_locked(&archive).map_err(|e| format!("Failed to open runtime archive: {}", e))?;
+    let mut archive_file = open_archive_locked(&archive)
+        .map_err(|e| format!("Failed to open runtime archive: {}", e))?;
     let archive_digest = sha256_reader(&mut archive_file)?;
     let manifest = resolve_runtime_archive_manifest_for_install(&archive, &archive_digest)?;
     if !is_safe_runtime_version(&manifest.version) {
@@ -3830,12 +3837,21 @@ fn wait_for_server(
 /// How one attempt to bring a server up ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LaunchOutcome {
-    Ready { pid: u32, waited: Duration },
+    Ready {
+        pid: u32,
+        waited: Duration,
+    },
     /// Spawned, but not answering yet when the foreground wait ended.
-    Pending { pid: u32, waited: Duration },
+    Pending {
+        pid: u32,
+        waited: Duration,
+    },
     /// Our process ended, yet a server answers on the endpoint: another program took the port.
     TakenOver,
-    Failed { stage: &'static str, message: String },
+    Failed {
+        stage: &'static str,
+        message: String,
+    },
 }
 
 /// Everything `resolve_start` observes and does to the outside world, so the decision logic
@@ -3884,7 +3900,10 @@ fn launch_with_fallback(
         LaunchOutcome::Failed { message, .. } => Some(message.clone()),
         _ => None,
     };
-    match (wanted_failure, previous.filter(|previous| *previous != wanted)) {
+    match (
+        wanted_failure,
+        previous.filter(|previous| *previous != wanted),
+    ) {
         (Some(reason), Some(previous)) => LaunchResult {
             outcome: host.launch(previous),
             binary: previous.to_path_buf(),
@@ -4536,7 +4555,8 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
     // (runtime_path, runtime_version) are stored as one pair: the selected binary and ITS
     // version, never the version of whatever server happens to answer.
     let recorded_version = version_to_record_for_binary(&settings_snapshot, &binary_path, &version);
-    let host = endpoint_host_port(&endpoint).map_err(|err| mark_failure("invalid_configuration", err))?;
+    let host =
+        endpoint_host_port(&endpoint).map_err(|err| mark_failure("invalid_configuration", err))?;
     let context = StartContext {
         app,
         state: state.inner(),
@@ -4555,12 +4575,9 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         previous_runtime_binary(&settings_snapshot, managed_root.as_deref(), running)
     });
     match resolution {
-        StartResolution::AlreadyRunning { running_version } => Ok(context.already_running(
-            &source,
-            &binary_path,
-            &recorded_version,
-            &running_version,
-        )),
+        StartResolution::AlreadyRunning { running_version } => {
+            Ok(context.already_running(&source, &binary_path, &recorded_version, &running_version))
+        }
         StartResolution::Launched(LaunchOutcome::Ready { pid, waited }) => {
             context.ready(&source, &binary_path, &recorded_version, pid, waited)
         }
@@ -4597,16 +4614,23 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
             );
             let (pid, reachable) = match outcome {
                 LaunchOutcome::Ready { pid, waited } => {
-                    let _ = context.ready(&previous_source, &binary, &previous_recorded, pid, waited);
+                    let _ =
+                        context.ready(&previous_source, &binary, &previous_recorded, pid, waited);
                     (Some(pid), true)
                 }
                 LaunchOutcome::Pending { pid, waited } => {
-                    let _ = context.pending(&previous_source, &binary, &previous_recorded, pid, waited);
+                    let _ =
+                        context.pending(&previous_source, &binary, &previous_recorded, pid, waited);
                     (Some(pid), false)
                 }
                 _ => {
                     let running = query_running_ollama_version(&endpoint).unwrap_or_default();
-                    let _ = context.already_running(&previous_source, &binary, &previous_recorded, &running);
+                    let _ = context.already_running(
+                        &previous_source,
+                        &binary,
+                        &previous_recorded,
+                        &running,
+                    );
                     (None, true)
                 }
             };
@@ -4974,13 +4998,17 @@ mod tests {
         let latest: Vec<_> = versions.iter().filter(|e| e.latest).collect();
         assert_eq!(latest.len(), 1);
         assert_eq!(latest[0].version, "0.40.13");
-        assert_eq!(latest[0].released_at.as_deref(), Some("2026-10-18T00:28:57Z"));
+        assert_eq!(
+            latest[0].released_at.as_deref(),
+            Some("2026-10-18T00:28:57Z")
+        );
         assert_eq!(latest[0].size_bytes, Some(1_582_514_985));
     }
 
     #[test]
     fn build_version_list_detects_runtimes_installed_on_disk() {
-        let root = std::env::temp_dir().join(format!("trispr-runtime-test-{}", crate::util::now_ms()));
+        let root =
+            std::env::temp_dir().join(format!("trispr-runtime-test-{}", crate::util::now_ms()));
         let version_dir = root.join("0.30.4");
         fs::create_dir_all(&version_dir).expect("create version dir");
         fs::write(version_dir.join("ollama.exe"), b"stub").expect("write stub");
@@ -5003,8 +5031,15 @@ mod tests {
     #[test]
     fn select_major_line_versions_keeps_newest_patch_per_minor_line() {
         let tags: Vec<String> = [
-            "v0.40.13", "v0.40.2", "v0.35.1", "v0.35.0", "v0.34.4", "v0.1.32-rc1", "v0.1.32",
-            "vfoo", "v0.40",
+            "v0.40.13",
+            "v0.40.2",
+            "v0.35.1",
+            "v0.35.0",
+            "v0.34.4",
+            "v0.1.32-rc1",
+            "v0.1.32",
+            "vfoo",
+            "v0.40",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -5031,7 +5066,8 @@ mod tests {
 
     #[test]
     fn runtime_download_url_must_be_the_official_release_asset() {
-        let ok = "https://github.com/ollama/ollama/releases/download/v0.40.7/ollama-windows-amd64.zip";
+        let ok =
+            "https://github.com/ollama/ollama/releases/download/v0.40.7/ollama-windows-amd64.zip";
         assert!(validate_runtime_download_url(ok, "0.40.7").is_ok());
         // wrong host, wrong version, credentials trick, wrong file, traversal
         assert!(validate_runtime_download_url(
@@ -5063,13 +5099,19 @@ mod tests {
         for v in &versions {
             println!(
                 "{} installable={} prerelease={} released={:?} size={:?} reason={:?}",
-                v.version, v.installable, v.prerelease, v.released_at, v.size_bytes,
+                v.version,
+                v.installable,
+                v.prerelease,
+                v.released_at,
+                v.size_bytes,
                 v.installable_reason
             );
         }
         assert!(versions.len() >= 2);
         assert!(versions.iter().any(|v| v.version == "0.30.4"));
-        assert!(versions.iter().any(|v| v.installable && v.size_bytes.is_some()));
+        assert!(versions
+            .iter()
+            .any(|v| v.installable && v.size_bytes.is_some()));
     }
 
     #[test]
@@ -5303,7 +5345,10 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         let pinned = resolve_pinned_manifest(&version).expect("version must be the pinned one");
         let mut file = open_archive_locked(Path::new(&zip_path)).expect("open archive");
         let digest = sha256_reader(&mut file).expect("hash archive");
-        assert_eq!(digest, pinned.sha256, "archive must match the pinned SHA-256");
+        assert_eq!(
+            digest, pinned.sha256,
+            "archive must match the pinned SHA-256"
+        );
         file.seek(SeekFrom::Start(0)).expect("rewind");
         let mut zip = ZipArchive::new(file).expect("valid zip");
         let root = PathBuf::from(std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA"))
@@ -5423,15 +5468,28 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
 
     #[test]
     fn subject_organization_must_match_exactly() {
-        let real = "CN=Ollama Inc., O=Ollama Inc., L=Toronto, S=Ontario, C=CA, SERIALNUMBER=2713355";
+        let real =
+            "CN=Ollama Inc., O=Ollama Inc., L=Toronto, S=Ontario, C=CA, SERIALNUMBER=2713355";
         assert!(subject_has_organization(real, "Ollama Inc."));
         assert!(subject_has_organization("O=Ollama Inc.", "Ollama Inc."));
-        assert!(subject_has_organization("CN=x, O=\"Ollama Inc.\"", "Ollama Inc."));
+        assert!(subject_has_organization(
+            "CN=x, O=\"Ollama Inc.\"",
+            "Ollama Inc."
+        ));
         // substring tricks the old `contains("O=Ollama Inc.")` accepted
-        assert!(!subject_has_organization("CN=x, O=Ollama Inc.Fake", "Ollama Inc."));
-        assert!(!subject_has_organization("CN=O=Ollama Inc., O=Evil", "Ollama Inc."));
+        assert!(!subject_has_organization(
+            "CN=x, O=Ollama Inc.Fake",
+            "Ollama Inc."
+        ));
+        assert!(!subject_has_organization(
+            "CN=O=Ollama Inc., O=Evil",
+            "Ollama Inc."
+        ));
         assert!(!subject_has_organization("OU=O=Ollama Inc.", "Ollama Inc."));
-        assert!(!subject_has_organization("CN=x, O=\"Ollama Inc., Evil\"", "Ollama Inc."));
+        assert!(!subject_has_organization(
+            "CN=x, O=\"Ollama Inc., Evil\"",
+            "Ollama Inc."
+        ));
         assert!(!subject_has_organization("CN=Ollama Inc.", "Ollama Inc."));
         assert!(!subject_has_organization("", "Ollama Inc."));
     }
@@ -5665,7 +5723,11 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
 
         let err = swap_runtime_dir(&staging, &target, &backup).expect_err("must fail");
 
-        assert!(err.contains("previous runtime was restored"), "got: {}", err);
+        assert!(
+            err.contains("previous runtime was restored"),
+            "got: {}",
+            err
+        );
         assert_eq!(read_marker(&target), "old");
         assert!(!backup.exists());
     }
@@ -5757,7 +5819,10 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         assert!(fs::write(&archive, b"swapped").is_err());
         assert!(fs::rename(&archive, root.path().join("moved.zip")).is_err());
         assert!(fs::remove_file(&archive).is_err());
-        assert!(File::open(&archive).is_ok(), "plain readers are still allowed");
+        assert!(
+            File::open(&archive).is_ok(),
+            "plain readers are still allowed"
+        );
         assert_eq!(fs::read(&archive).unwrap(), b"original");
 
         drop(held);
@@ -5827,10 +5892,7 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
     #[test]
     fn extract_rejects_oversized_archives_before_writing_anything() {
         let root = TempDir::new("extract-big");
-        let mut zip = open_zip(build_zip(&[
-            ("a.bin", &[0u8; 10]),
-            ("b.bin", &[0u8; 10]),
-        ]));
+        let mut zip = open_zip(build_zip(&[("a.bin", &[0u8; 10]), ("b.bin", &[0u8; 10])]));
 
         let err = extract_runtime_zip(&mut zip, root.path(), 15, &mut |_, _| {})
             .expect_err("20 declared bytes > 15 byte limit");
@@ -6150,21 +6212,18 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
 
         // target folder absent, e.g. a legacy "0.20.2" that was never installed
         let settings = managed_settings("0.20.2", &remembered);
-        let (path, _) =
-            select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
+        let (path, _) = select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
         assert_eq!(path, remembered);
 
         // an empty target folder (no ollama.exe inside) does not count as installed
         fs::create_dir_all(root.path().join("0.40.13")).expect("empty target dir");
         let settings = managed_settings("0.40.13", &remembered);
-        let (path, _) =
-            select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
+        let (path, _) = select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
         assert_eq!(path, remembered);
 
         // a target that is not a plain version string is never joined into a path
         let settings = managed_settings("..\\0.40.7", &remembered);
-        let (path, _) =
-            select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
+        let (path, _) = select_runtime_binary_in(&settings, Some(root.path())).expect("binary");
         assert_eq!(path, remembered);
     }
 
@@ -6172,7 +6231,11 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
     fn managed_selection_without_any_runtime_root_reports_the_missing_install() {
         let settings = managed_settings("0.40.13", Path::new("Z:\\does\\not\\exist\\ollama.exe"));
         let err = select_runtime_binary_in(&settings, None).expect_err("nothing installed");
-        assert!(err.contains("no local Ollama runtime is installed"), "got: {}", err);
+        assert!(
+            err.contains("no local Ollama runtime is installed"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -6232,10 +6295,7 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
         settings
     }
 
-    fn detect(
-        settings: &crate::state::Settings,
-        root: &Path,
-    ) -> Option<(String, PathBuf, String)> {
+    fn detect(settings: &crate::state::Settings, root: &Path) -> Option<(String, PathBuf, String)> {
         detect_runtime_in(settings, Some(root))
     }
 
@@ -6253,7 +6313,8 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
             assert_eq!(source, "per_user_zip");
             assert_eq!(path, root.path().join("0.40.7").join("ollama.exe"));
             assert_eq!(
-                version, "0.40.7",
+                version,
+                "0.40.7",
                 "version of another binary was reported for {}",
                 path.display()
             );
@@ -6327,10 +6388,16 @@ Full Changelog: https://github.com/ollama/ollama/compare/v0.20.1...v0.20.2
             Some("0.40.7".to_string())
         );
         // install leftovers, files directly in the root, foreign folders, non-version names
-        assert_eq!(version_of(root.join(".old-0.40.7-1").join("ollama.exe")), None);
+        assert_eq!(
+            version_of(root.join(".old-0.40.7-1").join("ollama.exe")),
+            None
+        );
         assert_eq!(version_of(root.join("ollama.exe")), None);
         assert_eq!(version_of(root.join("0.40.7")), None);
-        assert_eq!(version_of(Path::new("elsewhere").join("0.40.7").join("ollama.exe")), None);
+        assert_eq!(
+            version_of(Path::new("elsewhere").join("0.40.7").join("ollama.exe")),
+            None
+        );
         assert_eq!(version_of(root.join("a b").join("ollama.exe")), None);
     }
 }

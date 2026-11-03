@@ -1852,8 +1852,7 @@ mod tests {
             drop(listener);
             format!("http://127.0.0.1:{}", port)
         };
-        let details =
-            build_model_details(&dead, "hf.co/a/b:Q4", None, &sources_for(&remote), 1);
+        let details = build_model_details(&dead, "hf.co/a/b:Q4", None, &sources_for(&remote), 1);
         assert!(details.local.is_none());
         assert!(details.local_error.unwrap().contains("not reachable"));
         assert!(details.remote.is_some());

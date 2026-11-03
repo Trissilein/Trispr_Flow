@@ -310,7 +310,10 @@ pub fn parse_modelfile_blob_digests(modelfile: &str) -> Vec<String> {
     let mut rest = modelfile;
     while let Some(idx) = rest.find(MARKER) {
         let after = &rest[idx + MARKER.len()..];
-        let hex: String = after.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        let hex: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect();
         if hex.len() == 64 {
             let hex = hex.to_ascii_lowercase();
             if !found.contains(&hex) {
@@ -333,8 +336,14 @@ pub struct ModelUpdateStatus {
 }
 
 fn digests_match(local: &str, remote: &str) -> bool {
-    let local = local.trim().trim_start_matches("sha256:").to_ascii_lowercase();
-    let remote = remote.trim().trim_start_matches("sha256:").to_ascii_lowercase();
+    let local = local
+        .trim()
+        .trim_start_matches("sha256:")
+        .to_ascii_lowercase();
+    let remote = remote
+        .trim()
+        .trim_start_matches("sha256:")
+        .to_ascii_lowercase();
     if local.len() < 12 || remote.len() < 12 {
         return false;
     }
@@ -458,12 +467,14 @@ mod tests {
         let statuses = check_model_updates(vec![
             ModelUpdateCheckInput {
                 name: "gemma4:e4b".to_string(),
-                digest: "dc35e8d9c6061baa6f0fa870975ab6932e2542b579b13ea0f199fa4bb7300c9c".to_string(),
+                digest: "dc35e8d9c6061baa6f0fa870975ab6932e2542b579b13ea0f199fa4bb7300c9c"
+                    .to_string(),
                 local_layers: vec![],
             },
             ModelUpdateCheckInput {
                 name: "gemma4:e4b-it-q4_K_M".to_string(),
-                digest: "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb".to_string(),
+                digest: "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb"
+                    .to_string(),
                 local_layers: vec![],
             },
             ModelUpdateCheckInput {
@@ -486,13 +497,19 @@ mod tests {
             },
         ]);
         for s in &statuses {
-            println!("{} -> {} remote={:?} size={:?}", s.name, s.status, s.remote_digest, s.remote_size_bytes);
+            println!(
+                "{} -> {} remote={:?} size={:?}",
+                s.name, s.status, s.remote_digest, s.remote_size_bytes
+            );
         }
         assert_eq!(statuses[0].status, "current");
         assert_eq!(statuses[1].status, "outdated");
         assert_eq!(statuses[2].status, "current");
         assert_eq!(statuses[3].status, "local");
-        assert_eq!(statuses[4].status, "current", "same weights must not read as outdated");
+        assert_eq!(
+            statuses[4].status, "current",
+            "same weights must not read as outdated"
+        );
         assert!(precheck_model_ref("hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M").is_ok());
         assert!(precheck_model_ref("hf.co/unsloth/gemma-4-E4B-it-GGUF:NoSuchQuant").is_err());
         // A repo that does not exist answers 401 on Hugging Face: must read as "not found".
@@ -517,11 +534,15 @@ mod tests {
     fn registry_mock() -> crate::ai_fallback::test_support::MockServer {
         use crate::ai_fallback::test_support::{MockReply, MockServer};
         MockServer::start(|request| match request.path.as_str() {
-            "/v2/library/gemma4/manifests/e4b" => MockReply::ok(manifest_with_config(CONFIG_DIGEST)),
+            "/v2/library/gemma4/manifests/e4b" => {
+                MockReply::ok(manifest_with_config(CONFIG_DIGEST))
+            }
             p if p == format!("/v2/library/gemma4/blobs/{}", CONFIG_DIGEST) => MockReply::ok(
                 serde_json::json!({ "model_format": "gguf", "file_type": "Q4_K_M", "requires": "0.30.9" }),
             ),
-            "/v2/library/plain/manifests/latest" => MockReply::ok(manifest_with_config(CONFIG_DIGEST)),
+            "/v2/library/plain/manifests/latest" => {
+                MockReply::ok(manifest_with_config(CONFIG_DIGEST))
+            }
             p if p == format!("/v2/library/plain/blobs/{}", CONFIG_DIGEST) => {
                 MockReply::ok(serde_json::json!({ "model_format": "gguf" }))
             }
@@ -531,7 +552,9 @@ mod tests {
             "/v2/library/badconfig/manifests/latest" => {
                 MockReply::ok(manifest_with_config("sha256:../../../etc/passwd"))
             }
-            "/v2/library/noblob/manifests/latest" => MockReply::ok(manifest_with_config(CONFIG_DIGEST)),
+            "/v2/library/noblob/manifests/latest" => {
+                MockReply::ok(manifest_with_config(CONFIG_DIGEST))
+            }
             _ => MockReply::error(404, "not found"),
         })
     }
@@ -563,19 +586,25 @@ mod tests {
         // config blob without "requires"
         let plain = parse_model_ref("plain").unwrap();
         assert_eq!(
-            fetch_model_requires_at(&registry.base_url, &plain).ok().expect("ok"),
+            fetch_model_requires_at(&registry.base_url, &plain)
+                .ok()
+                .expect("ok"),
             None
         );
         // manifest without a config entry: no blob request at all
         let noconfig = parse_model_ref("noconfig").unwrap();
         assert_eq!(
-            fetch_model_requires_at(&registry.base_url, &noconfig).ok().expect("ok"),
+            fetch_model_requires_at(&registry.base_url, &noconfig)
+                .ok()
+                .expect("ok"),
             None
         );
         // a digest that is not sha256:<64 hex> is never put into a URL
         let badconfig = parse_model_ref("badconfig").unwrap();
         assert_eq!(
-            fetch_model_requires_at(&registry.base_url, &badconfig).ok().expect("ok"),
+            fetch_model_requires_at(&registry.base_url, &badconfig)
+                .ok()
+                .expect("ok"),
             None
         );
         assert!(registry
@@ -595,7 +624,9 @@ mod tests {
         // manifest exists but its config blob does not: a registry fault, not "unknown model"
         let noblob = parse_model_ref("noblob").unwrap();
         match fetch_model_requires_at(&registry.base_url, &noblob) {
-            Err(ManifestLookupError::Failed(reason)) => assert!(reason.contains("config blob"), "{}", reason),
+            Err(ManifestLookupError::Failed(reason)) => {
+                assert!(reason.contains("config blob"), "{}", reason)
+            }
             _ => panic!("expected a Failed lookup"),
         }
     }
@@ -605,7 +636,9 @@ mod tests {
         let registry = registry_mock();
         let hf = parse_model_ref("hf.co/unsloth/gemma-4-E4B-it-GGUF:Q4_K_M").unwrap();
         assert_eq!(
-            fetch_model_requires_at(&registry.base_url, &hf).ok().expect("ok"),
+            fetch_model_requires_at(&registry.base_url, &hf)
+                .ok()
+                .expect("ok"),
             None
         );
         assert!(registry.requests().is_empty());
@@ -619,7 +652,10 @@ mod tests {
         );
         assert_eq!(parse_requires_from_config_blob(br#"{"requires":""}"#), None);
         assert_eq!(parse_requires_from_config_blob(br#"{"requires":7}"#), None);
-        assert_eq!(parse_requires_from_config_blob(br#"{"model_format":"gguf"}"#), None);
+        assert_eq!(
+            parse_requires_from_config_blob(br#"{"model_format":"gguf"}"#),
+            None
+        );
         assert_eq!(parse_requires_from_config_blob(b"<html>nope</html>"), None);
         let huge = format!("{{\"requires\":\"{}\"}}", "9".repeat(64));
         assert_eq!(parse_requires_from_config_blob(huge.as_bytes()), None);
@@ -631,8 +667,18 @@ mod tests {
             well_formed_sha256_digest(CONFIG_DIGEST).as_deref(),
             Some(CONFIG_DIGEST)
         );
-        assert!(well_formed_sha256_digest(&CONFIG_DIGEST.to_uppercase().replace("SHA256", "sha256")).is_some());
-        for bad in ["", "sha256:", "sha256:abc", "md5:7ca1", "../../x", &format!("{}0", CONFIG_DIGEST)] {
+        assert!(well_formed_sha256_digest(
+            &CONFIG_DIGEST.to_uppercase().replace("SHA256", "sha256")
+        )
+        .is_some());
+        for bad in [
+            "",
+            "sha256:",
+            "sha256:abc",
+            "md5:7ca1",
+            "../../x",
+            &format!("{}0", CONFIG_DIGEST),
+        ] {
             assert_eq!(well_formed_sha256_digest(bad), None, "{}", bad);
         }
     }
@@ -680,8 +726,14 @@ mod tests {
                 ]
             }))
         });
-        let manifest = fetch_from(&server.base_url, "gemma4:e4b").ok().expect("manifest");
-        assert_eq!(manifest.total_size_bytes, u64::MAX, "a lying size saturates instead of wrapping or panicking");
+        let manifest = fetch_from(&server.base_url, "gemma4:e4b")
+            .ok()
+            .expect("manifest");
+        assert_eq!(
+            manifest.total_size_bytes,
+            u64::MAX,
+            "a lying size saturates instead of wrapping or panicking"
+        );
         assert_eq!(manifest.model_layer_digest.as_deref(), Some("ab"));
     }
 
@@ -780,10 +832,47 @@ mod tests {
     /// characters, in random order. Every parser of outside data must survive all of it.
     fn hostile_strings(count: usize) -> Vec<String> {
         const PIECES: &[&str] = &[
-            "a", "Z", "0", ":", "/", "\\", "-", "_", ".", "<", ">", "</", "<transcript>", "</transcript>",
-            "<think>", "</think>", "transcript", "ä", "ß", "日", "🦙", "\u{0}", "\u{feff}", " ", "\n", "\t",
-            "sha256-", "sha256:", "hf.co/", "trispr-backup-", "O=", "\"", ",", " 0.40.13", "v", "ollama version is ",
-            "client version is ", "hier ist ", "Sure", "=", "|",
+            "a",
+            "Z",
+            "0",
+            ":",
+            "/",
+            "\\",
+            "-",
+            "_",
+            ".",
+            "<",
+            ">",
+            "</",
+            "<transcript>",
+            "</transcript>",
+            "<think>",
+            "</think>",
+            "transcript",
+            "ä",
+            "ß",
+            "日",
+            "🦙",
+            "\u{0}",
+            "\u{feff}",
+            " ",
+            "\n",
+            "\t",
+            "sha256-",
+            "sha256:",
+            "hf.co/",
+            "trispr-backup-",
+            "O=",
+            "\"",
+            ",",
+            " 0.40.13",
+            "v",
+            "ollama version is ",
+            "client version is ",
+            "hier ist ",
+            "Sure",
+            "=",
+            "|",
         ];
         let mut state = 0x9E37_79B9_7F4A_7C15u64;
         let mut next = move || {
@@ -830,10 +919,17 @@ mod tests {
         let accented = format!("{}ä", "a".repeat(16));
         assert!(!digests_match(&accented, &ascii));
         assert!(!digests_match(&ascii, &accented));
-        for hostile in ["日本語日本語日本語日本語", "🦙🦙🦙🦙🦙🦙🦙🦙", "ÄÖÜÄÖÜÄÖÜÄÖÜ"] {
+        for hostile in [
+            "日本語日本語日本語日本語",
+            "🦙🦙🦙🦙🦙🦙🦙🦙",
+            "ÄÖÜÄÖÜÄÖÜÄÖÜ",
+        ] {
             assert!(!digests_match(hostile, "dc35e8d9c6061baa"));
             assert!(!digests_match("dc35e8d9c6061baa", hostile));
-            assert!(digests_match(hostile, hostile), "identical text is identical");
+            assert!(
+                digests_match(hostile, hostile),
+                "identical text is identical"
+            );
         }
     }
 

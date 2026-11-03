@@ -1160,7 +1160,10 @@ mod tests {
     fn a_backup_only_belongs_to_the_model_it_was_made_from() {
         let backup = backup_name_for("gemma4:e4b", 42);
         assert!(is_backup_of("gemma4:e4b", &backup));
-        assert!(is_backup_of("GEMMA4:E4B", &backup), "case-insensitive like Ollama names");
+        assert!(
+            is_backup_of("GEMMA4:E4B", &backup),
+            "case-insensitive like Ollama names"
+        );
         assert!(!is_backup_of("llama3:8b", &backup));
         // a longer model name must not claim the backup of its prefix
         assert!(!is_backup_of("gemma4:e4b-it-q4_K_M", &backup));
@@ -2132,11 +2135,19 @@ Hier ist der Text: {}
 
         assert_inconclusive(&result);
         assert!(
-            result.detail.as_deref().unwrap().contains("Time limit of 400 ms exceeded"),
+            result
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("Time limit of 400 ms exceeded"),
             "{:?}",
             result
         );
-        assert!(started.elapsed() < Duration::from_millis(2000), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_millis(2000),
+            "{:?}",
+            started.elapsed()
+        );
         assert_nothing_destroyed(&ollama.trace());
     }
 
@@ -2147,7 +2158,11 @@ Hier ist der Text: {}
 
         assert_inconclusive(&result);
         assert!(
-            result.detail.as_deref().unwrap().contains("could not reach Ollama"),
+            result
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("could not reach Ollama"),
             "{:?}",
             result
         );
@@ -2160,7 +2175,8 @@ Hier ist der Text: {}
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let tags = serde_json::json!({ "models": [{ "name": MODEL }, { "name": BACKUP }] }).to_string();
+        let tags =
+            serde_json::json!({ "models": [{ "name": MODEL }, { "name": BACKUP }] }).to_string();
         let server = std::thread::spawn(move || {
             // first connection: /api/tags; then the listener is dropped
             if let Ok((mut stream, _)) = listener.accept() {
@@ -2193,7 +2209,11 @@ Hier ist der Text: {}
 
             assert_inconclusive(&result);
             assert!(
-                result.detail.as_deref().unwrap().contains(&format!("HTTP {}", status)),
+                result
+                    .detail
+                    .as_deref()
+                    .unwrap()
+                    .contains(&format!("HTTP {}", status)),
                 "{:?}",
                 result
             );
@@ -2215,7 +2235,10 @@ Hier ist der Text: {}
     #[test]
     fn a_refusal_of_the_server_is_still_a_failed_check_and_restores() {
         // 4xx = the server answered about the model (missing, runtime too old, ...)
-        for (status, message) in [(404u16, "model not found"), (412, "requires a newer version of Ollama")] {
+        for (status, message) in [
+            (404u16, "model not found"),
+            (412, "requires a newer version of Ollama"),
+        ] {
             let ollama = mock(
                 MockConfig::new(vec![MODEL, BACKUP])
                     .chat(move |_, _| MockReply::error(status, message)),
@@ -2223,7 +2246,11 @@ Hier ist der Text: {}
             let result =
                 finalize_model_update_impl(ollama.endpoint(), MODEL, BACKUP, LIMIT).unwrap();
 
-            assert!(!result.verified && result.restored && !result.inconclusive, "{:?}", result);
+            assert!(
+                !result.verified && result.restored && !result.inconclusive,
+                "{:?}",
+                result
+            );
             let trace = ollama.trace();
             assert!(
                 position(&trace, &format!("delete:{}", MODEL))
@@ -2242,7 +2269,11 @@ Hier ist der Text: {}
             }))
         }));
         let result = finalize_model_update_impl(ollama.endpoint(), MODEL, BACKUP, LIMIT).unwrap();
-        assert!(!result.verified && result.restored && !result.inconclusive, "{:?}", result);
+        assert!(
+            !result.verified && result.restored && !result.inconclusive,
+            "{:?}",
+            result
+        );
     }
 
     #[test]
@@ -2257,20 +2288,31 @@ Hier ist der Text: {}
         let broken = mock(MockConfig::new(vec![MODEL]).chat(|_, _| MockReply::error(500, "boom")));
         assert!(run_model_verification(broken.endpoint(), MODEL, LIMIT).inconclusive);
 
-        let refused = mock(MockConfig::new(vec![MODEL]).chat(|_, _| MockReply::error(412, "too old")));
+        let refused =
+            mock(MockConfig::new(vec![MODEL]).chat(|_, _| MockReply::error(412, "too old")));
         let refused = run_model_verification(refused.endpoint(), MODEL, LIMIT);
         assert!(!refused.ok && !refused.inconclusive, "{:?}", refused);
 
         let chatty = mock(MockConfig::new(vec![MODEL]).chat(|_, user| {
-            MockReply::ok(serde_json::json!({ "message": { "content": format!("Sure! {}", user) } }))
+            MockReply::ok(
+                serde_json::json!({ "message": { "content": format!("Sure! {}", user) } }),
+            )
         }));
         assert!(!run_model_verification(chatty.endpoint(), MODEL, LIMIT).inconclusive);
 
         // the payload of `verify_ollama_model` keeps the shape the UI was built against
         let payload = serde_json::to_value(&timed_out).unwrap();
-        let mut keys: Vec<&str> = payload.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut keys: Vec<&str> = payload
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         keys.sort_unstable();
-        assert_eq!(keys, vec!["detail", "latency_ms", "load_ms", "ok", "sample"]);
+        assert_eq!(
+            keys,
+            vec!["detail", "latency_ms", "load_ms", "ok", "sample"]
+        );
     }
 
     #[test]
@@ -2286,8 +2328,15 @@ Hier ist der Text: {}
             finalize,
             serde_json::json!({"verified": false, "restored": false, "inconclusive": true, "detail": "why"})
         );
-        let rollback = serde_json::to_value(RollbackResult { restored: true, detail: None }).unwrap();
-        assert_eq!(rollback, serde_json::json!({"restored": true, "detail": null}));
+        let rollback = serde_json::to_value(RollbackResult {
+            restored: true,
+            detail: None,
+        })
+        .unwrap();
+        assert_eq!(
+            rollback,
+            serde_json::json!({"restored": true, "detail": null})
+        );
     }
 
     #[test]
@@ -2305,9 +2354,19 @@ Hier ist der Text: {}
 
         let result = replace_model_impl(ollama.endpoint(), OLD, NEW, &mut switch, LIMIT).unwrap();
 
-        assert!(!result.verified && !result.switched_active && !result.deleted_old, "{:?}", result);
+        assert!(
+            !result.verified && !result.switched_active && !result.deleted_old,
+            "{:?}",
+            result
+        );
         let trace = ollama.trace();
-        assert!(!trace.iter().any(|e| e == "settings" || e.starts_with("delete:")), "{:?}", trace);
+        assert!(
+            !trace
+                .iter()
+                .any(|e| e == "settings" || e.starts_with("delete:")),
+            "{:?}",
+            trace
+        );
     }
 
     // ── rollback ─────────────────────────────────────────────────────────────────
@@ -2317,7 +2376,13 @@ Hier ist der Text: {}
         let ollama = mock(MockConfig::new(vec![MODEL, BACKUP]));
         let result = rollback_model_update_impl(ollama.endpoint(), MODEL, BACKUP).unwrap();
 
-        assert_eq!(result, RollbackResult { restored: true, detail: None });
+        assert_eq!(
+            result,
+            RollbackResult {
+                restored: true,
+                detail: None
+            }
+        );
         let trace = ollama.trace();
         let unload_new = position(&trace, &format!("unload:{}", MODEL));
         let delete_new = position(&trace, &format!("delete:{}", MODEL));
@@ -2328,25 +2393,42 @@ Hier ist der Text: {}
             "{:?}",
             trace
         );
-        assert!(!trace.iter().any(|e| e.starts_with("chat:")), "a rollback runs no check: {:?}", trace);
+        assert!(
+            !trace.iter().any(|e| e.starts_with("chat:")),
+            "a rollback runs no check: {:?}",
+            trace
+        );
     }
 
     #[test]
     fn rollback_refuses_foreign_and_missing_backups_before_touching_anything() {
-        let ollama = mock(MockConfig::new(vec![MODEL, "precious:1", "trispr-backup-other-model:1"]));
+        let ollama = mock(MockConfig::new(vec![
+            MODEL,
+            "precious:1",
+            "trispr-backup-other-model:1",
+        ]));
 
         // not a Trispr Flow backup name
         let error = rollback_model_update_impl(ollama.endpoint(), MODEL, "precious:1").unwrap_err();
         assert!(error.contains("not a Trispr Flow backup name"), "{}", error);
         // another model's backup
         let error =
-            rollback_model_update_impl(ollama.endpoint(), MODEL, "trispr-backup-other-model:1").unwrap_err();
+            rollback_model_update_impl(ollama.endpoint(), MODEL, "trispr-backup-other-model:1")
+                .unwrap_err();
         assert!(error.contains("not a backup of"), "{}", error);
-        assert!(ollama.trace().is_empty(), "nothing may be contacted: {:?}", ollama.trace());
+        assert!(
+            ollama.trace().is_empty(),
+            "nothing may be contacted: {:?}",
+            ollama.trace()
+        );
 
         // the right name, but the backup is gone: the new tag must not be deleted
         let error = rollback_model_update_impl(ollama.endpoint(), MODEL, BACKUP).unwrap_err();
-        assert!(error.contains("not found") && error.contains("nothing was changed"), "{}", error);
+        assert!(
+            error.contains("not found") && error.contains("nothing was changed"),
+            "{}",
+            error
+        );
         assert_nothing_destroyed(&ollama.trace());
         assert_eq!(ollama.trace(), vec!["tags"]);
     }
@@ -2361,9 +2443,16 @@ Hier ist der Text: {}
 
         assert!(!result.restored, "{:?}", result);
         let detail = result.detail.unwrap();
-        assert!(detail.contains(BACKUP) && detail.contains("still available"), "{}", detail);
         assert!(
-            !ollama.trace().iter().any(|e| e == &format!("delete:{}", BACKUP)),
+            detail.contains(BACKUP) && detail.contains("still available"),
+            "{}",
+            detail
+        );
+        assert!(
+            !ollama
+                .trace()
+                .iter()
+                .any(|e| e == &format!("delete:{}", BACKUP)),
             "the backup is the only copy of the old version: {:?}",
             ollama.trace()
         );
@@ -2378,13 +2467,16 @@ Hier ist der Text: {}
         let result = rollback_model_update_impl(ollama.endpoint(), MODEL, BACKUP).unwrap();
 
         assert!(result.restored, "{:?}", result);
-        assert!(ollama.trace().contains(&format!("copy:{}->{}", BACKUP, MODEL)));
+        assert!(ollama
+            .trace()
+            .contains(&format!("copy:{}->{}", BACKUP, MODEL)));
     }
 
     #[test]
     fn an_inconclusive_update_can_be_checked_again_or_rolled_back() {
         // First the check cannot finish (nothing changes), then the user rolls back.
-        let ollama = mock(MockConfig::new(vec![MODEL, BACKUP]).chat(|_, _| MockReply::error(503, "busy")));
+        let ollama =
+            mock(MockConfig::new(vec![MODEL, BACKUP]).chat(|_, _| MockReply::error(503, "busy")));
         let first = finalize_model_update_impl(ollama.endpoint(), MODEL, BACKUP, LIMIT).unwrap();
         assert_inconclusive(&first);
         assert_nothing_destroyed(&ollama.trace());
@@ -2392,17 +2484,57 @@ Hier ist der Text: {}
         let rolled_back = rollback_model_update_impl(ollama.endpoint(), MODEL, BACKUP).unwrap();
         assert!(rolled_back.restored);
         let trace = ollama.trace();
-        assert!(position(&trace, &format!("copy:{}->{}", BACKUP, MODEL)) > position(&trace, &format!("chat:{}", MODEL)));
+        assert!(
+            position(&trace, &format!("copy:{}->{}", BACKUP, MODEL))
+                > position(&trace, &format!("chat:{}", MODEL))
+        );
     }
 
     /// Deterministic hostile text: multi-byte characters, tag fragments, separators, control
     /// characters, in random order. Every parser of outside data must survive all of it.
     fn hostile_strings(count: usize) -> Vec<String> {
         const PIECES: &[&str] = &[
-            "a", "Z", "0", ":", "/", "\\", "-", "_", ".", "<", ">", "</", "<transcript>", "</transcript>",
-            "<think>", "</think>", "transcript", "ä", "ß", "日", "🦙", "\u{0}", "\u{feff}", " ", "\n", "\t",
-            "sha256-", "sha256:", "hf.co/", "trispr-backup-", "O=", "\"", ",", " 0.40.13", "v", "ollama version is ",
-            "client version is ", "hier ist ", "Sure", "=", "|",
+            "a",
+            "Z",
+            "0",
+            ":",
+            "/",
+            "\\",
+            "-",
+            "_",
+            ".",
+            "<",
+            ">",
+            "</",
+            "<transcript>",
+            "</transcript>",
+            "<think>",
+            "</think>",
+            "transcript",
+            "ä",
+            "ß",
+            "日",
+            "🦙",
+            "\u{0}",
+            "\u{feff}",
+            " ",
+            "\n",
+            "\t",
+            "sha256-",
+            "sha256:",
+            "hf.co/",
+            "trispr-backup-",
+            "O=",
+            "\"",
+            ",",
+            " 0.40.13",
+            "v",
+            "ollama version is ",
+            "client version is ",
+            "hier ist ",
+            "Sure",
+            "=",
+            "|",
         ];
         let mut state = 0x9E37_79B9_7F4A_7C15u64;
         let mut next = move || {
@@ -2432,7 +2564,11 @@ Hier ist der Text: {}
             let _ = model_names_equal(&text, "gemma4:e4b");
             let backup = backup_name_for(&text, u64::MAX);
             assert!(backup.is_ascii(), "backup names are ASCII: {:?}", backup);
-            assert!(is_backup_of(&text, &backup), "{:?} must own its backup name", text);
+            assert!(
+                is_backup_of(&text, &backup),
+                "{:?} must own its backup name",
+                text
+            );
             let _ = is_backup_of("gemma4:e4b", &text);
             let _ = parse_runtime_version(&text);
             let _ = runtime_compatibility(Some(&text), Some(&text));
@@ -3294,7 +3430,11 @@ Hier ist der Text: {}
             started.elapsed()
         );
         assert!(!result.ok);
-        assert!(result.inconclusive, "a time limit is no verdict: {:?}", result);
+        assert!(
+            result.inconclusive,
+            "a time limit is no verdict: {:?}",
+            result
+        );
         assert!(
             result
                 .detail
@@ -3366,36 +3506,64 @@ Hier ist der Text: {}
         assert_ne!(broken, original, "the tag really was overwritten");
         live_unload_all(ep, &[LIVE_BASE, LIVE_TARGET]);
 
-        let first = finalize_model_update_impl(ep, LIVE_TARGET, &backup, Duration::from_millis(300))
-            .expect("finalize");
+        let first =
+            finalize_model_update_impl(ep, LIVE_TARGET, &backup, Duration::from_millis(300))
+                .expect("finalize");
         println!("phase 1, 300 ms limit: {:?}", first);
-        assert!(!first.verified && !first.restored && first.inconclusive, "{:?}", first);
-        assert_eq!(live_digest(ep, LIVE_TARGET).as_deref(), Some(broken.as_str()), "new build kept");
-        assert_eq!(live_digest(ep, &backup).as_deref(), Some(original.as_str()), "backup kept");
+        assert!(
+            !first.verified && !first.restored && first.inconclusive,
+            "{:?}",
+            first
+        );
+        assert_eq!(
+            live_digest(ep, LIVE_TARGET).as_deref(),
+            Some(broken.as_str()),
+            "new build kept"
+        );
+        assert_eq!(
+            live_digest(ep, &backup).as_deref(),
+            Some(original.as_str()),
+            "backup kept"
+        );
 
-        let rerun = finalize_model_update_impl(ep, LIVE_TARGET, &backup, LIVE_LIMIT).expect("re-run");
+        let rerun =
+            finalize_model_update_impl(ep, LIVE_TARGET, &backup, LIVE_LIMIT).expect("re-run");
         println!("phase 1, re-run with {:?}: {:?}", LIVE_LIMIT, rerun);
-        assert!(!rerun.verified && rerun.restored && !rerun.inconclusive, "{:?}", rerun);
-        assert_eq!(live_digest(ep, LIVE_TARGET).as_deref(), Some(original.as_str()));
+        assert!(
+            !rerun.verified && rerun.restored && !rerun.inconclusive,
+            "{:?}",
+            rerun
+        );
+        assert_eq!(
+            live_digest(ep, LIVE_TARGET).as_deref(),
+            Some(original.as_str())
+        );
         assert_eq!(live_digest(ep, &backup), None);
 
         // phase 2: inconclusive again, this time the user rolls back by hand
         let backup = backup_model_impl(ep, LIVE_TARGET, crate::util::now_ms()).expect("backup");
         live_create_broken(ep, LIVE_TARGET);
         live_unload_all(ep, &[LIVE_BASE, LIVE_TARGET]);
-        let second = finalize_model_update_impl(ep, LIVE_TARGET, &backup, Duration::from_millis(300))
-            .expect("finalize");
+        let second =
+            finalize_model_update_impl(ep, LIVE_TARGET, &backup, Duration::from_millis(300))
+                .expect("finalize");
         assert!(second.inconclusive, "{:?}", second);
         let rolled_back = rollback_model_update_impl(ep, LIVE_TARGET, &backup).expect("rollback");
         println!("phase 2 rollback: {:?}", rolled_back);
         assert!(rolled_back.restored, "{:?}", rolled_back);
-        assert_eq!(live_digest(ep, LIVE_TARGET).as_deref(), Some(original.as_str()));
+        assert_eq!(
+            live_digest(ep, LIVE_TARGET).as_deref(),
+            Some(original.as_str())
+        );
         assert_eq!(live_digest(ep, &backup), None);
         let after = run_model_verification(ep, LIVE_TARGET, LIVE_LIMIT);
         assert!(after.ok, "the restored build works: {:?}", after);
 
         // a backup of another model is refused by the real server flow too
-        assert!(rollback_model_update_impl(ep, LIVE_TARGET, "trispr-backup-trispr-live-other:1").is_err());
+        assert!(
+            rollback_model_update_impl(ep, LIVE_TARGET, "trispr-backup-trispr-live-other:1")
+                .is_err()
+        );
         live.finish("inconclusive");
     }
 

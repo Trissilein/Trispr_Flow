@@ -57,7 +57,10 @@ fn an_empty_target_becomes_the_recommended_runtime() {
 
     let whitespace = normalized(managed("0.30.4", "  ", true));
     assert_eq!(whitespace.runtime_target_version, "0.40.13");
-    assert!(!whitespace.runtime_target_explicit, "an empty target cannot be a choice");
+    assert!(
+        !whitespace.runtime_target_explicit,
+        "an empty target cannot be a choice"
+    );
 }
 
 #[test]
@@ -66,7 +69,10 @@ fn the_legacy_default_is_replaced_unless_the_user_picked_it() {
     assert_eq!(implicit.runtime_target_version, "0.40.13");
 
     let picked = normalized(managed("0.40.13", "0.20.2", true));
-    assert_eq!(picked.runtime_target_version, "0.20.2", "an explicit pick is not a legacy default");
+    assert_eq!(
+        picked.runtime_target_version, "0.20.2",
+        "an explicit pick is not a legacy default"
+    );
 
     // with an older runtime recorded the legacy default still becomes the recommended one
     let older = normalized(managed("0.30.4", "0.20.2", false));
@@ -79,7 +85,11 @@ fn only_a_managed_runtime_has_a_target_to_heal() {
         let mut settings = managed("0.50.1", "0.40.13", false);
         settings.providers.ollama.runtime_source = source.to_string();
         let ollama = normalized(settings);
-        assert_eq!(ollama.runtime_target_version, "0.40.13", "source {}", source);
+        assert_eq!(
+            ollama.runtime_target_version, "0.40.13",
+            "source {}",
+            source
+        );
     }
 }
 
@@ -87,7 +97,11 @@ fn only_a_managed_runtime_has_a_target_to_heal() {
 fn versions_that_are_not_plain_releases_never_trigger_a_change() {
     for running in ["", "unknown", "0.41.0-rc1", "0.41", "garbage"] {
         let ollama = normalized(managed(running, "0.30.4", false));
-        assert_eq!(ollama.runtime_target_version, "0.30.4", "running {:?}", running);
+        assert_eq!(
+            ollama.runtime_target_version, "0.30.4",
+            "running {:?}",
+            running
+        );
     }
     // a v prefix on the recorded version is read like the plain version
     let ollama = normalized(managed("v0.40.13", "0.30.4", false));
@@ -107,7 +121,10 @@ fn comparison_is_numeric_not_textual() {
 fn heal_reports_whether_it_changed_something() {
     let mut ollama = managed("0.40.13", "0.30.4", false).providers.ollama;
     assert!(ollama.heal_stale_runtime_target());
-    assert!(!ollama.heal_stale_runtime_target(), "second call has nothing left to do");
+    assert!(
+        !ollama.heal_stale_runtime_target(),
+        "second call has nothing left to do"
+    );
     ollama.runtime_target_explicit = true;
     ollama.runtime_target_version = "0.30.4".to_string();
     assert!(!ollama.heal_stale_runtime_target());
@@ -120,7 +137,10 @@ fn the_flag_survives_a_restart_the_settings_roundtrip() {
         let mut settings = managed("0.40.13", "0.30.4", explicit);
         normalize_ai_fallback_fields(&mut settings);
         let json = serde_json::to_string(&settings).expect("serialize settings");
-        assert!(json.contains("\"runtime_target_explicit\""), "the flag is persisted");
+        assert!(
+            json.contains("\"runtime_target_explicit\""),
+            "the flag is persisted"
+        );
 
         let mut loaded: Settings = serde_json::from_str(&json).expect("load settings");
         normalize_ai_fallback_fields(&mut loaded);

@@ -1,7 +1,5 @@
 use super::error::AIError;
-use super::provider::{
-    is_ssrf_target, ollama_endpoint_candidates, ping_ollama_quick,
-};
+use super::provider::{is_ssrf_target, ollama_endpoint_candidates, ping_ollama_quick};
 use super::{prepare_refinement, update_and_persist_settings};
 use crate::state::{normalize_ai_fallback_fields, AppState};
 use crate::{terminate_managed_child_slot, update_runtime_diagnostics, update_startup_status};
@@ -176,7 +174,10 @@ pub(crate) async fn ping_refinement_model(
 /// Takes `model` out of the set of running pulls. A lock that a panicking thread poisoned is
 /// recovered (like everywhere else): skipping it would leave the entry in place and the model
 /// "already in progress" until the app restarts.
-pub(super) fn release_pull(pulls: &std::sync::Mutex<std::collections::HashSet<String>>, model: &str) {
+pub(super) fn release_pull(
+    pulls: &std::sync::Mutex<std::collections::HashSet<String>>,
+    model: &str,
+) {
     pulls
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -456,9 +457,11 @@ pub(crate) async fn warmup_ollama_model(
             super::provider::num_ctx_for_tier(settings.ai_fallback.adaptive_num_ctx_tier),
         )
     };
-    tauri::async_runtime::spawn_blocking(move || warmup_ollama_model_impl(&endpoint, &model, num_ctx))
-        .await
-        .map_err(|e| format!("Model warmup failed: {}", e))?
+    tauri::async_runtime::spawn_blocking(move || {
+        warmup_ollama_model_impl(&endpoint, &model, num_ctx)
+    })
+    .await
+    .map_err(|e| format!("Model warmup failed: {}", e))?
 }
 
 pub(crate) fn warmup_ollama_model_impl(

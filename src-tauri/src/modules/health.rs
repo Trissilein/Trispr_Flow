@@ -148,11 +148,7 @@ mod tests {
     #[test]
     fn stale_error_on_disabled_optional_module_is_not_active_failure() {
         let mut settings = ModuleSettings::default();
-        registry::set_last_error(
-            &mut settings,
-            "ai_refinement",
-            "Missing dependency.",
-        );
+        registry::set_last_error(&mut settings, "ai_refinement", "Missing dependency.");
 
         let health = health_for("ai_refinement", &settings);
 

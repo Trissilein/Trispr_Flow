@@ -1970,7 +1970,14 @@ mod tests {
 
         let mut settings: Settings =
             serde_json::from_str(raw).expect("old settings.json must still deserialize");
-        for stale_provider in ["claude", "openai", "gemini", "lm_studio", "oobabooga", "manual"] {
+        for stale_provider in [
+            "claude",
+            "openai",
+            "gemini",
+            "lm_studio",
+            "oobabooga",
+            "manual",
+        ] {
             settings.ai_fallback.provider = stale_provider.to_string();
             settings.providers.ollama.runtime_source = "manual".to_string();
             normalize_ai_fallback_fields(&mut settings);
@@ -1998,7 +2005,10 @@ mod tests {
         )
         .expect("managed settings");
         normalize_ai_fallback_fields(&mut managed);
-        assert_eq!(managed.providers.ollama.runtime_path, "C:/rt/0.40.13/ollama.exe");
+        assert_eq!(
+            managed.providers.ollama.runtime_path,
+            "C:/rt/0.40.13/ollama.exe"
+        );
         assert_eq!(managed.providers.ollama.runtime_version, "0.40.13");
 
         // Removed fields (and any secret) must not be written back out.

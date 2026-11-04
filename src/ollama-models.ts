@@ -1781,23 +1781,6 @@ async function runRuntimeAction(action: string, task: () => Promise<void>): Prom
   }
 }
 
-async function handleDetectRuntime(): Promise<void> {
-  await runRuntimeAction("detect", async () => {
-    await refreshOllamaRuntimeState({ force: true });
-    if (runtimeDetect?.is_serving) {
-      await refreshOllamaInstalledModels();
-    }
-    showToast({
-      type: runtimeDetect?.found ? "success" : "warning",
-      title: runtimeDetect?.found ? "Runtime detected" : "No runtime detected",
-      message: runtimeDetect?.found
-        ? `${runtimeDetect.source} (${runtimeDetect.version || "unknown version"})`
-        : "Install the managed local runtime.",
-      duration: 3500,
-    });
-  });
-}
-
 /** `detect_ollama_runtime`, remembering which target was selected when it ran (see `isRuntimeVersionOnDisk`). */
 async function detectRuntime(timeoutMs = RUNTIME_ACTION_TIMEOUT_MS): Promise<OllamaRuntimeDetectResult> {
   const target = currentTargetVersion();
@@ -2213,10 +2196,6 @@ async function handleRefreshRuntimeAndModels(): Promise<void> {
 
 export async function refreshOllamaRuntimeAndModels(): Promise<void> {
   await handleRefreshRuntimeAndModels();
-}
-
-export async function detectOllamaRuntime(): Promise<void> {
-  await handleDetectRuntime();
 }
 
 // No dedicated chip styles exist yet: borrow the look of existing badges, keep a hook class per status.

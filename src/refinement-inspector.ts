@@ -406,20 +406,6 @@ export function setInspectorFocus(entryId: string): void {
   renderLatestInspector();
 }
 
-export function clearInspectorFocus(): void {
-  focusedEntryId = null;
-  renderLatestInspector();
-}
-
-export function resetRefinementInspector(): void {
-  latest = null;
-  focusedEntryId = null;
-  snapshotsByJobId.clear();
-  snapshotsByEntryId.clear();
-  persistSnapshotStateToStorage();
-  renderLatestInspector();
-}
-
 /** Remove snapshots for entries that no longer exist and persist the change. */
 export function pruneOrphanedSnapshots(validEntryIds: Set<string>): void {
   let pruned = false;

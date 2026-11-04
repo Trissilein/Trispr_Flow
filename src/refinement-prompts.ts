@@ -25,22 +25,6 @@ export const BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS: ReadonlyArray<{
   { id: "llm_prompt", label: "LLM Prompt Engineer" },
 ];
 
-export const CUSTOM_REFINEMENT_PROMPT_OPTION: {
-  id: "custom";
-  label: string;
-} = {
-  id: "custom",
-  label: "Custom Prompt",
-};
-
-export const NEW_REFINEMENT_PROMPT_OPTION: {
-  id: typeof NEW_REFINEMENT_PROMPT_OPTION_ID;
-  label: string;
-} = {
-  id: NEW_REFINEMENT_PROMPT_OPTION_ID,
-  label: "New Preset…",
-};
-
 const USER_PRESET_OPTION_PREFIX = "user:";
 
 function isGermanLanguage(language: string | null | undefined): boolean {

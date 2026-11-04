@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ex-system-Ollama users** with refinement enabled get the local-AI setup wizard once on the first start after the update (their system/manual runtime is replaced by the managed one, which is not installed yet).
 - **Docs and scripts**: dropped references to the missing `test:docs`, benchmark and `qa:assistant` scripts (`CONTRIBUTING.md`, `docs/README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/TASK_SCHEDULE.md`); `scripts/ollama-soak.mjs` skips the request phases with a message when the local German fixture (`bench/fixtures/tts-de-kitten`) is missing instead of crashing.
 
+- **Dead-code sweep**: 20 Tauri commands with no caller (start/stop recording, toggle transcribe, paste text, hotkey test/conflicts, OPUS/ffmpeg probes, history add, hardware/VRAM info, refine, log folder, module scan, runtime metrics), the unread metrics counters, 16 unused DOM refs and 15 unused frontend exports, plus the helpers only they used. No behavior change.
+
 ## [0.9.0] - 2026-11-03
 
 ### Fixed / Changed — after the lean-down (2026-11-03)

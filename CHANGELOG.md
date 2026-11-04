@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-04
+
 ### Fixed / Changed — leftovers after the lean-down (2026-11-04)
 
 - **Vocab cleanup throttle** now holds: the backend knows `last_vocab_cleanup_ms` and saves it in `settings.json`, so the LLM cleanup runs at most every 4 days instead of at every app start. Old settings files load as "never cleaned up".

@@ -63,7 +63,6 @@ pub fn record_paste(state: &EnterCaptureState, text: &str) {
         TargetIdentity {
             hwnd: hwnd.0 as isize,
             pid,
-            timestamp_ms: now_ms,
         }
     };
 

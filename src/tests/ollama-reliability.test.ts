@@ -883,7 +883,7 @@ describe("degraded backends through the real renderer", () => {
   });
 
   describe("the onboarding flag (local_ai_wizard_completed) is not flipped by what could not be read", () => {
-    const completedSetup = { local_ai_wizard_completed: true, local_ai_wizard_pending: false, ollama_remote_expert_opt_in: false };
+    const completedSetup = { local_ai_wizard_completed: true, local_ai_wizard_pending: false };
     const savedWizardStates = (ctx: Ctx) =>
       ctx.callsOf("save_settings").map((call) => (call.args as { settings: { setup?: { local_ai_wizard_completed: boolean } } }).settings.setup?.local_ai_wizard_completed);
 

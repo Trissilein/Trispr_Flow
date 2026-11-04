@@ -432,21 +432,6 @@ export function detectTopics(text: string): string[] {
 }
 
 /**
- * Detect topics for all history entries
- * @returns Object with entry ID to topics mapping
- */
-export function detectTopicsForHistory(): Record<string, string[]> {
-  const result: Record<string, string[]> = {};
-  const entries = buildConversationHistory();
-
-  entries.forEach((entry) => {
-    result[entry.id] = detectTopics(getPreferredEntryText(entry));
-  });
-
-  return result;
-}
-
-/**
  * Build HTML for topic badges
  * @param topics - Array of topic names or scored topics
  * @returns HTML string for topic badges
@@ -476,10 +461,6 @@ let _historyRenderFrame: number | null = null;
 
 const HISTORY_PAGE_SIZE = 50;
 let _historyVisibleCount = HISTORY_PAGE_SIZE;
-
-export function resetHistoryVisibleCount(): void {
-  _historyVisibleCount = HISTORY_PAGE_SIZE;
-}
 
 export function scheduleHistoryRender(): void {
   if (_historyRenderFrame !== null) return;

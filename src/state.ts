@@ -6,7 +6,6 @@ import type {
   ModelInfo,
   DownloadProgress,
   QuantizeProgress,
-  RecordingState,
   HistoryTab,
   OllamaPullProgress,
   OverlayHealthEvent,
@@ -40,8 +39,6 @@ export let models: ModelInfo[] = [];
 export const modelProgress = new Map<string, DownloadProgress>();
 export const quantizeProgress = new Map<string, QuantizeProgress>();
 export const ollamaPullProgress = new Map<string, OllamaPullProgress>();
-export let currentCaptureStatus: RecordingState = "idle";
-export let currentTranscribeStatus: RecordingState = "idle";
 export let currentHistoryTab: HistoryTab = "mic";
 export let dynamicSustainThreshold: number = 0.01;
 export let startupStatus: StartupStatus | null = null;
@@ -129,14 +126,6 @@ export function setOutputDevices(newDevices: AudioDevice[]) {
 
 export function setModels(newModels: ModelInfo[]) {
   models = newModels;
-}
-
-export function setCurrentCaptureStatus(status: RecordingState) {
-  currentCaptureStatus = status;
-}
-
-export function setCurrentTranscribeStatus(status: RecordingState) {
-  currentTranscribeStatus = status;
 }
 
 export function setCurrentHistoryTab(tab: HistoryTab) {

@@ -25,7 +25,6 @@ Run before opening a PR:
 
 ```bash
 npm run test
-npm run test:docs
 npm run test:smoke
 ```
 

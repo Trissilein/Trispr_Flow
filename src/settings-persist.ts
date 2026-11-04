@@ -11,9 +11,7 @@ export function ensureSetupDefaults(): void {
     settings.setup ??= {
         local_ai_wizard_completed: false,
         local_ai_wizard_pending: true,
-        ollama_remote_expert_opt_in: false,
     };
-    settings.setup.ollama_remote_expert_opt_in ??= false;
 }
 
 export function syncDerivedLanguageSettings(): void {

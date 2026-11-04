@@ -242,6 +242,12 @@ impl AIProvidersSettings {
     pub fn normalize(&mut self) {
         self.ollama.normalize();
     }
+
+    /// True while the stored runtime is a system / manual Ollama that `normalize` is about to
+    /// replace by the managed one (call it before `normalize`).
+    pub fn has_foreign_runtime(&self) -> bool {
+        self.ollama.runtime_source != MANAGED_RUNTIME_SOURCE
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

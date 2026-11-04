@@ -9,8 +9,7 @@ use crate::postprocessing::process_transcript;
 use crate::refinement_adaptation::{record_refinement_observation, RefinementObservation};
 use crate::state::{
     mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
-    normalize_ai_fallback_fields, push_history_entry_inner, record_refinement_fallback_failed,
-    record_refinement_timeout, save_settings_file, AppState, Settings,
+    normalize_ai_fallback_fields, push_history_entry_inner, save_settings_file, AppState, Settings,
 };
 use crate::transcription::{
     rms_i16, should_drop_transcript, transcribe_audio, RefinementGateDecision, TranscriptionResult,
@@ -1429,21 +1428,17 @@ fn handle_transcription_ok(
     // On bypass the PTT eager-warmup (handle_ptt_press) is already loading the
     // model in the background, so the *next* dictation will refine.
     let refinement_enabled = ai_refinement_capability_enabled(settings);
-    let provider_is_ollama = settings.ai_fallback.provider == "ollama";
-    let (model_loaded, ollama_vram_bytes) = if provider_is_ollama {
+    // The provider is always "ollama" (normalized on load and save).
+    let (model_loaded, ollama_vram_bytes) =
         crate::ai_fallback::provider::fetch_ollama_model_load_status(
             &settings.providers.ollama.endpoint,
             &settings.ai_fallback.model,
         )
         .map(|status| (status.loaded, status.size_vram))
-        .unwrap_or((false, 0))
-    } else {
-        // Not reachable: the provider is always normalized to "ollama".
-        (true, 0)
-    };
-    let gpu_busy = provider_is_ollama && state.gpu_busy.load(std::sync::atomic::Ordering::Relaxed);
+        .unwrap_or((false, 0));
+    let gpu_busy = state.gpu_busy.load(std::sync::atomic::Ordering::Relaxed);
     let should_refine = refinement_enabled && model_loaded && !gpu_busy;
-    let ollama_cold = provider_is_ollama && refinement_enabled && !model_loaded;
+    let ollama_cold = refinement_enabled && !model_loaded;
 
     // Cold start inverts the deferral: paste raw immediately and let the
     // refinement warm the model in the background (history-only result).
@@ -1456,12 +1451,11 @@ fn handle_transcription_ok(
         None
     } else if !refinement_enabled {
         Some("disabled".to_string())
-    } else if provider_is_ollama && gpu_busy {
+    } else if gpu_busy {
         Some("gpu_busy".to_string())
-    } else if provider_is_ollama && !model_loaded {
-        Some("ollama_model_not_loaded".to_string())
     } else {
-        Some("provider_not_ready".to_string())
+        // refinement enabled but not should_refine: GPU is not busy, so the model is not loaded.
+        Some("ollama_model_not_loaded".to_string())
     };
     let _ = app_handle.emit(
         "transcription:result",
@@ -1485,9 +1479,9 @@ fn handle_transcription_ok(
                 should_refine,
                 paste_deferred,
                 skipped_reason,
-                ollama_model_loaded: provider_is_ollama.then_some(model_loaded),
-                ollama_vram_bytes: provider_is_ollama.then_some(ollama_vram_bytes),
-                ollama_gpu_busy: provider_is_ollama.then_some(gpu_busy),
+                ollama_model_loaded: Some(model_loaded),
+                ollama_vram_bytes: Some(ollama_vram_bytes),
+                ollama_gpu_busy: Some(gpu_busy),
             },
         },
     );
@@ -1668,7 +1662,7 @@ pub(crate) fn sync_overlay_after_settings_change(app_handle: &AppHandle) {
             .settings
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if settings.ai_fallback.provider != "ollama" || !settings.ai_fallback.enabled {
+        if !settings.ai_fallback.enabled {
             return;
         }
         settings.ai_fallback.model.clone()
@@ -1836,7 +1830,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 } else {
                     "prepare_failed"
                 };
-                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                 app_handle.state::<AppState>().paste_arbiter.settle(
                     &app_handle,
                     &job_id,
@@ -1884,7 +1877,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         } else {
                             "prepare_failed"
                         };
-                        record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                         app_handle.state::<AppState>().paste_arbiter.settle(
                             &app_handle,
                             &job_id,
@@ -1934,11 +1926,8 @@ pub(crate) fn maybe_spawn_ai_refinement(
             }
 
             // Model resolved successfully — now signal that refinement is active.
-            let _activity_guard = start_refinement_activity_guard(
-                app_handle.clone(),
-                setup.provider.id().to_string(),
-                setup.model.clone(),
-            );
+            let _activity_guard =
+                start_refinement_activity_guard(app_handle.clone(), setup.model.clone());
             if diagnostics_enabled {
                 info!(
                     "[refinement:{}] inference starting trigger={} source={} provider={} model={} entry_id={:?}",
@@ -1992,8 +1981,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
                     .provider
                     .refine_transcript(&text, &effective_model, &setup.options);
             if let Err(error) = &refinement_result {
-                if provider_id == "ollama" && is_ollama_model_not_found_message(&error.to_string())
-                {
+                if is_ollama_model_not_found_message(&error.to_string()) {
                     if let Some(repaired_model) = repair_ollama_model_after_not_found(
                         &app_handle,
                         &settings_snapshot,
@@ -2128,9 +2116,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         setup.model,
                         e
                     );
-                    if matches!(e, AIError::Timeout) {
-                        record_refinement_timeout(app_handle.state::<AppState>().inner());
-                    }
                     record_refinement_observation(
                         &app_handle,
                         &effective_model,
@@ -2140,7 +2125,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             RefinementObservation::Failure
                         },
                     );
-                    record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                     app_handle.state::<AppState>().paste_arbiter.settle(
                         &app_handle,
                         &job_id,
@@ -2255,26 +2239,20 @@ fn repair_ollama_model_after_not_found(
 
 pub(crate) struct RefinementActivityGuard {
     app_handle: AppHandle,
-    provider: String,
     model: String,
 }
 
 pub(crate) fn start_refinement_activity_guard(
     app_handle: AppHandle,
-    provider: String,
     model: String,
 ) -> RefinementActivityGuard {
     begin_refinement_activity(&app_handle);
-    RefinementActivityGuard {
-        app_handle,
-        provider,
-        model,
-    }
+    RefinementActivityGuard { app_handle, model }
 }
 
 impl Drop for RefinementActivityGuard {
     fn drop(&mut self) {
-        end_refinement_activity(&self.app_handle, &self.provider, &self.model);
+        end_refinement_activity(&self.app_handle, &self.model);
     }
 }
 
@@ -2372,9 +2350,6 @@ fn schedule_ollama_idle_release(app_handle: AppHandle, generation: u64, model: S
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        if settings.ai_fallback.provider != "ollama" {
-            return;
-        }
         if crate::state::diagnostic_logging_enabled() {
             info!(
                 "[ollama.idle] releasing model={} after {}ms idle",
@@ -2422,7 +2397,7 @@ pub(crate) fn begin_refinement_activity(app_handle: &AppHandle) {
     }
 }
 
-pub(crate) fn end_refinement_activity(app_handle: &AppHandle, provider: &str, model: &str) {
+pub(crate) fn end_refinement_activity(app_handle: &AppHandle, model: &str) {
     let state = app_handle.state::<AppState>();
     loop {
         let current = state.refinement_active_count.load(Ordering::SeqCst);
@@ -2453,13 +2428,11 @@ pub(crate) fn end_refinement_activity(app_handle: &AppHandle, provider: &str, mo
                     .fetch_add(1, Ordering::SeqCst)
                     + 1;
                 let _ = update_overlay_refining_indicator(app_handle, false);
-                if provider == "ollama" {
-                    schedule_ollama_idle_release(
-                        app_handle.clone(),
-                        release_generation,
-                        model.to_string(),
-                    );
-                }
+                schedule_ollama_idle_release(
+                    app_handle.clone(),
+                    release_generation,
+                    model.to_string(),
+                );
             }
             return;
         }
@@ -2720,17 +2693,8 @@ fn run_toggle_processor(
 
     if auto_save {
         flush_mic_audio_to_session(&mut save_buffer);
-        match crate::session_manager::finalize_for("mic") {
-            Ok(Some(path)) => {
-                let state = app_handle.state::<AppState>();
-                *state
-                    .last_mic_recording_path
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    Some(path.to_string_lossy().to_string());
-            }
-            Ok(None) => {}
-            Err(err) => error!("Failed to finalize mic audio session: {}", err),
+        if let Err(err) = crate::session_manager::finalize_for("mic") {
+            error!("Failed to finalize mic audio session: {}", err);
         }
     }
 }
@@ -3348,15 +3312,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         // Save recording as OPUS for optional later processing/export.
         // Only save if duration > 10 seconds (avoid short dictations)
         if duration_ms >= 10_000 {
-            if let Ok(Some(opus_path)) =
-                crate::save_recording_opus(&app_handle, &samples, "mic", None)
-            {
-                let state_ref = app_handle.state::<crate::state::AppState>();
-                *state_ref
-                    .last_mic_recording_path
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(opus_path);
-            }
+            let _ = crate::save_recording_opus(&app_handle, &samples, "mic", None);
         }
 
         let mut recorder = state
@@ -3388,29 +3344,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
     });
 }
 
-#[tauri::command]
-pub(crate) fn get_last_recording_path(
-    source: String,
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
-    let path = if source == "output" || source == "system" {
-        state
-            .last_system_recording_path
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    } else {
-        state
-            .last_mic_recording_path
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    };
-    Ok(path)
-}
-
-#[tauri::command]
-pub(crate) fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
+fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
     let data_dir = crate::paths::resolve_base_dir(&app);
     let recordings_dir = data_dir.join("recordings");
 
@@ -3505,11 +3439,7 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     // overlay to "loading" even though the model is ready/loading.
     let already_warm = state.ollama_model_warm.load(Ordering::SeqCst);
     let warmup_running = state.ollama_warmup_in_progress.load(Ordering::SeqCst);
-    if ai_refinement_capability_enabled(&settings)
-        && settings.ai_fallback.provider == "ollama"
-        && !already_warm
-        && !warmup_running
-    {
+    if ai_refinement_capability_enabled(&settings) && !already_warm && !warmup_running {
         let endpoint = settings.providers.ollama.endpoint.clone();
         let model = settings.ai_fallback.model.clone();
         let num_ctx = crate::ai_fallback::provider::num_ctx_for_tier(
@@ -3634,22 +3564,6 @@ pub(crate) fn handle_toggle_async(app: AppHandle) {
             let _ = start_recording_with_settings(&app, &state, &settings);
         }
     }
-}
-
-#[tauri::command]
-pub(crate) fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    start_recording_with_settings(&app, &state, &settings)
-}
-
-#[tauri::command]
-pub(crate) fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    stop_recording_async(app, &state);
-    Ok(())
 }
 
 #[cfg(test)]

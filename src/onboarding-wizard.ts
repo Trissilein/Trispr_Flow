@@ -228,11 +228,3 @@ async function finishWizard(): Promise<void> {
     duration: 6000,
   });
 }
-
-export function showWizard(): void {
-  if (dom.onboardingWizard) {
-    currentStep = 1;
-    renderStep();
-    dom.onboardingWizard.hidden = false;
-  }
-}

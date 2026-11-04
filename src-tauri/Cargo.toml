@@ -1,6 +1,6 @@
 [package]
 name = "trispr-flow"
-version = "0.9.0"
+version = "0.9.1"
 description = "Offline dictation tool with tray + hotkey control"
 authors = ["trist"]
 edition = "2021"
@@ -41,7 +41,6 @@ sha2 = "0.10"
 hex = "0.4"
 url = "2"
 regex = "1"
-which = "6.0"
 hound = "3.5"
 chrono = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }

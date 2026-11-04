@@ -1,13 +1,11 @@
 use crate::ai_fallback::provider::ping_ollama_quick;
 use crate::modules::health as module_health;
 use crate::modules::registry as module_registry;
-use crate::state::{
-    self, AppState, RuntimeDiagnostics, RuntimeMetricsSnapshot, Settings, StartupStatus,
-};
+use crate::state::{AppState, RuntimeDiagnostics, Settings, StartupStatus};
 use crate::{
     capability_enabled, refresh_runtime_diagnostics, refresh_startup_status, RuntimeCapability,
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -63,26 +61,6 @@ pub(crate) async fn get_runtime_diagnostics(app: AppHandle) -> RuntimeDiagnostic
     })
     .await
     .unwrap_or_default()
-}
-
-#[tauri::command]
-pub(crate) fn get_runtime_metrics_snapshot(state: State<'_, AppState>) -> RuntimeMetricsSnapshot {
-    state::get_runtime_metrics_snapshot(state.inner())
-}
-
-#[tauri::command]
-pub(crate) fn record_runtime_metric(
-    state: State<'_, AppState>,
-    metric: String,
-) -> Result<(), String> {
-    match metric.trim() {
-        "refinement_timeout" | "refinement_fallback_timed_out" => {
-            state::record_refinement_timeout(state.inner());
-            state::record_refinement_fallback_timed_out(state.inner());
-            Ok(())
-        }
-        other => Err(format!("Unknown runtime metric '{}'", other)),
-    }
 }
 
 fn build_module_dependency_preflight_items(settings: &Settings) -> Vec<DependencyPreflightItem> {

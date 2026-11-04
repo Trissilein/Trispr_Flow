@@ -292,10 +292,6 @@ export function resetModelListState(): void {
   current = null;
 }
 
-export function isModelRowExpanded(key: string): boolean {
-  return expandedKeys.has(key);
-}
-
 export function isModelRowSelected(key: string): boolean {
   return selectedKeys.has(key);
 }

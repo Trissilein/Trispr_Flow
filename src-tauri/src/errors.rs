@@ -69,36 +69,6 @@ impl AppError {
             | AppError::Other(msg) => msg,
         }
     }
-
-    /// Returns whether this error is recoverable (can be retried)
-    #[allow(dead_code)]
-    pub fn is_recoverable(&self) -> bool {
-        match self {
-            AppError::AudioDevice(_) => true,   // Device might reconnect
-            AppError::Transcription(_) => true, // Can retry transcription
-            AppError::Hotkey(_) => false,       // Hotkey conflicts need manual fix
-            AppError::Storage(_) => true,       // Might be transient disk issue
-            AppError::Network(_) => true,       // Network might recover
-            AppError::Window(_) => true,        // Window issues might resolve
-            AppError::Other(_) => false,        // Unknown errors, don't retry
-        }
-    }
-
-    /// Returns a suggested action for the user
-    #[allow(dead_code)]
-    pub fn suggested_action(&self) -> Option<&str> {
-        match self {
-            AppError::AudioDevice(_) => Some("Check your microphone connection and try again"),
-            AppError::Transcription(_) => {
-                Some("Try recording again or check your model installation")
-            }
-            AppError::Hotkey(_) => Some("Choose a different hotkey combination"),
-            AppError::Storage(_) => Some("Check disk space and permissions"),
-            AppError::Network(_) => Some("Check your internet connection"),
-            AppError::Window(_) => Some("Try restarting the application"),
-            AppError::Other(_) => None,
-        }
-    }
 }
 
 /// Convert from String to AppError::Other
@@ -155,12 +125,6 @@ mod tests {
     fn test_error_title() {
         let err = AppError::Transcription("Model failed".to_string());
         assert_eq!(err.title(), "Transcription Failed");
-    }
-
-    #[test]
-    fn test_recoverable() {
-        assert!(AppError::AudioDevice("test".to_string()).is_recoverable());
-        assert!(!AppError::Hotkey("test".to_string()).is_recoverable());
     }
 
     #[test]

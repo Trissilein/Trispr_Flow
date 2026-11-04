@@ -78,22 +78,3 @@ where
         }
     })
 }
-
-/// Like `spawn_guarded` but with a return value. Returns `None` on panic.
-#[allow(dead_code)]
-pub(crate) fn spawn_guarded_with_result<F, T>(label: &'static str, f: F) -> JoinHandle<Option<T>>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    thread::spawn(
-        move || match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
-            Ok(val) => Some(val),
-            Err(payload) => {
-                let msg = crate::format_panic_payload(&*payload);
-                error!("Thread '{}' panicked: {}", label, msg);
-                None
-            }
-        },
-    )
-}

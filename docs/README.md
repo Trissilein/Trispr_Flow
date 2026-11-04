@@ -41,8 +41,7 @@ All other project docs belong in `docs/`.
 1. Edit the canonical file first.
 2. Update links/references (`README.md`, wiki pages, cross-links).
 3. If behavior changed, update `ROADMAP.md` and `docs/DECISIONS.md`.
-4. Run `npm run test:docs` before commit.
 
 ## Enforcement
 
-`npm run test:docs` checks root Markdown governance (no new ad-hoc root `.md` files).
+No automated docs check exists (there is no `test:docs` script). Keep to the rule in review: no new ad-hoc root `.md` files; new docs go under `docs/` and are linked from the table above.

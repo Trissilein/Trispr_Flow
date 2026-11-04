@@ -95,7 +95,6 @@ export interface AIProvidersSettings {
 export interface SetupSettings {
   local_ai_wizard_completed: boolean;
   local_ai_wizard_pending: boolean;
-  ollama_remote_expert_opt_in: boolean;
 }
 
 export interface Settings {
@@ -226,7 +225,7 @@ export interface Settings {
   conv_window_height?: number | null;
   conv_window_monitor?: string | null;
   conv_window_always_on_top?: boolean;
-  main_window_start_state?: "normal" | "minimized" | "tray";
+  main_window_start_state?: "normal" | "minimized";
   // UI theming
   accent_color: string;
 }
@@ -722,13 +721,4 @@ export interface ModuleUpdateInfo {
   current_version: string;
   latest_version: string;
   update_available: boolean;
-}
-
-export interface HardwareInfo {
-  gpu_name: string;
-  gpu_vram: string;
-  backend_recommended: string;
-  cuda_available: boolean;
-  driver_version: string;
-  update_url?: string | null;
 }

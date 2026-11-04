@@ -208,14 +208,14 @@ Function FirstRunConfigPage
   CreateFont $1 "Segoe UI" 11 700
   SendMessage $0 ${WM_SETFONT} $1 1
 
-  ${NSD_CreateLabel} 0 26u 100% 12u "KI-Verfeinerung (benötigt lokales Ollama):"
+  ${NSD_CreateLabel} 0 26u 100% 12u "KI-Verfeinerung (lokal, verwaltete Ollama-Runtime):"
   Pop $0
 
   ${NSD_CreateCheckbox} 10u 40u 100% 13u "KI-Verfeinerung direkt aktivieren"
   Pop $CheckAIRefinement
-  ; Default: unchecked (Ollama must be installed separately)
+  ; Default: unchecked. The app downloads its managed Ollama runtime + model on first launch (setup wizard).
 
-  ${NSD_CreateLabel} 22u 54u 95% 36u "Verbessert Transkripte mit lokalem KI-Modell (Ollama): Satzzeichen, Rephrasing, Prompt-Stile (präzise, Meeting, casual). Erfordert installiertes Ollama + Modell-Download beim ersten Start."
+  ${NSD_CreateLabel} 22u 54u 95% 36u "Verbessert Transkripte mit lokalem KI-Modell: Satzzeichen, Rephrasing, Prompt-Stile (präzise, Meeting, casual). Runtime und Modell (mehrere GB) lädt die App beim ersten Start selbst."
   Pop $0
 
   ${NSD_CreateLabel} 0 96u 100% 12u "Overlay-Stil (jederzeit in den App-Einstellungen änderbar):"
@@ -319,7 +319,7 @@ Function HardwareSummaryPage
 !endif
 
   ${If} $AIRefinementSelected == "1"
-    StrCpy $R0 "$R0KI-Verfeinerung:  Aktiviert (Ollama benötigt)$\r$\n"
+    StrCpy $R0 "$R0KI-Verfeinerung:  Aktiviert (Download beim ersten Start)$\r$\n"
   ${Else}
     StrCpy $R0 "$R0KI-Verfeinerung:  Deaktiviert$\r$\n"
   ${EndIf}
@@ -362,18 +362,17 @@ FunctionEnd
   FileWrite $0 '"language_mode":"auto",'
   FileWrite $0 '"topic_keywords":{"technical":["code","coding","debug","debugging","bug","error","stacktrace","exception","function","variable","api","endpoint","database","sql","query","schema","deploy","deployment","build","compile","performance","latency","memory","thread","integration","schnittstelle","fehler","datenbank","abfrage","bereitstellung","leistung","speicher","konfiguration","version","docker","kubernetes"],"meeting":["meeting","agenda","minutes","action","action item","deadline","owner","follow-up","stakeholder","alignment","decision","next step","roadmap","priority","milestone","planning","sync","standup","retrospective","workshop","besprechung","termin","protokoll","entscheidung","naechster schritt","prioritaet","meilenstein","planung","abstimmung","aufgabe","verantwortlich","rueckmeldung","review"],"personal":["personal","note","reminder","todo","to-do","follow-up","errand","appointment","family","health","habit","journal","private","vacation","shopping","budget","finance","bank","insurance","medicine","persoenlich","erinnerung","notiz","einkauf","urlaub","arzt","haushalt","konto","rechnung","gesundheit","routine","privat","aufraeumen"]},'
   FileWrite $0 '"model":"whisper-large-v3-turbo",'
-  FileWrite $0 '"cloud_fallback":false,'
 
   ; AI Refinement + module_settings — conditional on wizard choice
   ${If} $AIRefinementSelected == "1"
     FileWrite $0 '"module_settings":{"enabled_modules":["ai_refinement"],"consented_permissions":{},"module_overrides":{}},'
-    FileWrite $0 '"ai_fallback":{"enabled":true,"provider":"ollama","fallback_provider":null,"execution_mode":"local_primary","strict_local_mode":true,"preserve_source_language":true,"model":"qwen3.5:4b","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
+    FileWrite $0 '"ai_fallback":{"enabled":true,"provider":"ollama","preserve_source_language":true,"model":"gemma4:e4b","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
   ${Else}
     FileWrite $0 '"module_settings":{"enabled_modules":[],"consented_permissions":{},"module_overrides":{}},'
-    FileWrite $0 '"ai_fallback":{"enabled":false,"provider":"ollama","fallback_provider":null,"execution_mode":"local_primary","strict_local_mode":true,"preserve_source_language":true,"model":"","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
+    FileWrite $0 '"ai_fallback":{"enabled":false,"provider":"ollama","preserve_source_language":true,"model":"","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
   ${EndIf}
 
-  FileWrite $0 '"setup":{"local_ai_wizard_completed":false,"local_ai_wizard_pending":true,"ollama_remote_expert_opt_in":false},'
+  FileWrite $0 '"setup":{"local_ai_wizard_completed":false,"local_ai_wizard_pending":true},'
   FileWrite $0 '"audio_cues":true,'
   FileWrite $0 '"audio_cues_volume":0.3,'
   FileWrite $0 '"ptt_use_vad":false,'
@@ -480,53 +479,6 @@ FunctionEnd
   ${EndIf}
 
 !endif
-
-  ; ----------------------------------------------------------------
-  ; Ollama auto-install + model pull (when AI Refinement selected)
-  ; ----------------------------------------------------------------
-  ${If} $AIRefinementSelected == "1"
-    ; Check if Ollama is already installed
-    nsExec::ExecToStack 'powershell -NoProfile -Command "if(Test-Path \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\"){Write-Output \"installed\"}else{Write-Output \"missing\"}"'
-    Pop $0
-    Pop $1
-    StrCmp $1 "installed" OllamaAlreadyInstalled
-
-    ; Download Ollama installer
-    DetailPrint "Lade Ollama herunter (~80 MB)..."
-    nsExec::ExecToLog 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://ollama.com/download/OllamaSetup.exe\" -OutFile \"$TEMP\OllamaSetup.exe\" -UseBasicParsing;Exit 0}Catch{Write-Error $_.Exception.Message;Exit 1}"'
-    Pop $0
-    ${If} $0 != 0
-      IfSilent +2 0
-      MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama konnte nicht heruntergeladen werden.$\r$\nManuelle Installation: ollama.com$\r$\nKI-Verfeinerung wird ohne Ollama nicht funktionieren."
-      Goto OllamaDone
-    ${EndIf}
-
-    ; Silent install
-    DetailPrint "Installiere Ollama..."
-    nsExec::ExecToLog '"$TEMP\OllamaSetup.exe" /S'
-    Pop $0
-    ${If} $0 != 0
-      IfSilent +2 0
-      MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama-Installation fehlgeschlagen.$\r$\nManuelle Installation: ollama.com"
-      Delete "$TEMP\OllamaSetup.exe"
-      Goto OllamaDone
-    ${EndIf}
-    Delete "$TEMP\OllamaSetup.exe"
-
-    OllamaAlreadyInstalled:
-    ; Start Ollama serve in background, then pull the model
-    DetailPrint "Starte Ollama und lade qwen3.5:4b Modell (~400 MB)..."
-    nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\" -ArgumentList \"serve\" -WindowStyle Hidden; Start-Sleep -Seconds 5; $env:OLLAMA_HOST=\"http://127.0.0.1:11434\"; & \"$env:LOCALAPPDATA\Programs\Ollama\ollama.exe\" pull qwen3.5:4b"'
-    Pop $0
-    ${If} $0 != 0
-      IfSilent +2 0
-      MessageBox MB_OK|MB_ICONEXCLAMATION "Ollama-Modell konnte nicht heruntergeladen werden.$\r$\nDu kannst es später manuell laden:$\r$\nollama pull qwen3.5:4b"
-    ${Else}
-      DetailPrint "Ollama + qwen3.5:4b erfolgreich installiert"
-    ${EndIf}
-
-    OllamaDone:
-  ${EndIf}
 
   ; Keep both CUDA and Vulkan runtime folders on disk.
   ; Rationale:

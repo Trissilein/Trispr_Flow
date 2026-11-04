@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::warn;
 
-use crate::state::{push_history_entry_inner, push_transcribe_entry_inner, AppState, HistoryEntry};
+use crate::state::{AppState, HistoryEntry};
 
 // ---------------------------------------------------------------------------
 // PartitionKey
@@ -490,24 +490,4 @@ pub(crate) fn load_history_partition(
             .load_partition(&pk)),
         _ => Err(format!("Unknown history kind: {}", kind)),
     }
-}
-
-#[tauri::command]
-pub(crate) fn add_history_entry(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    text: String,
-    source: Option<String>,
-) -> Result<Vec<HistoryEntry>, String> {
-    let source = source.unwrap_or_else(|| "local".to_string());
-    push_history_entry_inner(&app, &state.history, text, source)
-}
-
-#[tauri::command]
-pub(crate) fn add_transcribe_entry(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    text: String,
-) -> Result<Vec<HistoryEntry>, String> {
-    push_transcribe_entry_inner(&app, &state.history_transcribe, text)
 }

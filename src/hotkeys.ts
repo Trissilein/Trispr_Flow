@@ -104,10 +104,6 @@ export function initHotkeyStatusListener(): void {
   );
 }
 
-export function getHotkeyRegistrationStatus(type: string): { registered: boolean; error?: string } {
-  return registrationStatus[type] ?? { registered: true };
-}
-
 export function setupHotkeyRecorder(
   type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords",
   input: HTMLInputElement | null,

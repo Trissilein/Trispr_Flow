@@ -42,7 +42,6 @@ pub(crate) fn sync_diagnostic_logging_enabled(settings: &Settings) {
 pub(crate) struct SetupSettings {
     pub(crate) local_ai_wizard_completed: bool,
     pub(crate) local_ai_wizard_pending: bool,
-    pub(crate) ollama_remote_expert_opt_in: bool,
 }
 
 impl Default for SetupSettings {
@@ -50,7 +49,6 @@ impl Default for SetupSettings {
         Self {
             local_ai_wizard_completed: false,
             local_ai_wizard_pending: true,
-            ollama_remote_expert_opt_in: false,
         }
     }
 }
@@ -358,6 +356,10 @@ pub(crate) struct Settings {
     /// Set to true after the one-time migration that clears legacy heuristic data.
     #[serde(default)]
     pub(crate) edit_delta_migrated: bool,
+    /// Unix-ms timestamp of the last successful LLM vocab cleanup run (0 = never); drives the
+    /// frontend's 4-day throttle, so it must round-trip through `settings.json`.
+    #[serde(default)]
+    pub(crate) last_vocab_cleanup_ms: u64,
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
@@ -489,6 +491,7 @@ impl Default for Settings {
       vocab_terms: Vec::new(),
       edit_substitutions: Vec::new(),
       edit_delta_migrated: false,
+      last_vocab_cleanup_ms: 0,
       postproc_llm_enabled: false,
       postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
@@ -733,8 +736,6 @@ pub(crate) struct FrontendWatchdogState {
 pub struct TargetIdentity {
     pub hwnd: isize,
     pub pid: u32,
-    #[allow(dead_code)]
-    pub timestamp_ms: u64,
 }
 
 #[derive(Default)]
@@ -764,17 +765,8 @@ pub(crate) struct AppState {
     pub(crate) refinement_last_success_ms: AtomicU64,
     pub(crate) refinement_last_success_model: Mutex<Option<String>>,
     pub(crate) ollama_idle_release_generation: AtomicU64,
-    pub(crate) runtime_start_attempts: AtomicU64,
-    pub(crate) runtime_start_failures: AtomicU64,
-    pub(crate) refinement_timeouts: AtomicU64,
-    pub(crate) refinement_fallback_failed: AtomicU64,
-    pub(crate) refinement_fallback_timed_out: AtomicU64,
     /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
     pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
-    /// Last recorded OPUS file path for mic input.
-    pub(crate) last_mic_recording_path: Mutex<Option<String>>,
-    /// Last recorded OPUS file path for system audio.
-    pub(crate) last_system_recording_path: Mutex<Option<String>>,
     /// Handle to the managed Ollama child process for cleanup on app exit.
     pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
     /// Handle to the managed Whisper-Server child process for cleanup on app exit.
@@ -810,45 +802,6 @@ pub(crate) struct AppState {
     pub(crate) managed_process_job: Option<ManagedProcessJob>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct RuntimeMetricsSnapshot {
-    pub(crate) runtime_start_attempts: u64,
-    pub(crate) runtime_start_failures: u64,
-    pub(crate) refinement_timeouts: u64,
-    pub(crate) refinement_fallback_failed: u64,
-    pub(crate) refinement_fallback_timed_out: u64,
-}
-
-pub(crate) fn record_runtime_start_attempt(state: &AppState) {
-    state
-        .runtime_start_attempts
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_runtime_start_failure(state: &AppState) {
-    state
-        .runtime_start_failures
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_refinement_timeout(state: &AppState) {
-    state
-        .refinement_timeouts
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_refinement_fallback_failed(state: &AppState) {
-    state
-        .refinement_fallback_failed
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_refinement_fallback_timed_out(state: &AppState) {
-    state
-        .refinement_fallback_timed_out
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
 pub(crate) fn record_refinement_success(state: &AppState, model: &str) {
     state
         .refinement_last_success_ms
@@ -863,26 +816,6 @@ pub(crate) fn record_refinement_success(state: &AppState, model: &str) {
     } else {
         Some(trimmed.to_string())
     };
-}
-
-pub(crate) fn get_runtime_metrics_snapshot(state: &AppState) -> RuntimeMetricsSnapshot {
-    RuntimeMetricsSnapshot {
-        runtime_start_attempts: state
-            .runtime_start_attempts
-            .load(std::sync::atomic::Ordering::Relaxed),
-        runtime_start_failures: state
-            .runtime_start_failures
-            .load(std::sync::atomic::Ordering::Relaxed),
-        refinement_timeouts: state
-            .refinement_timeouts
-            .load(std::sync::atomic::Ordering::Relaxed),
-        refinement_fallback_failed: state
-            .refinement_fallback_failed
-            .load(std::sync::atomic::Ordering::Relaxed),
-        refinement_fallback_timed_out: state
-            .refinement_fallback_timed_out
-            .load(std::sync::atomic::Ordering::Relaxed),
-    }
 }
 
 /// Only "minimized" is a real start state; unknown values and the legacy "tray" become "normal".
@@ -1270,7 +1203,15 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     }
     settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile == "custom";
     settings.ai_fallback.use_default_prompt = false;
+    // A user who ran on a system / manual Ollama has no managed runtime yet and may have no Ollama
+    // running at all: the start-up health check then reads nothing and never reopens the setup, so
+    // the migration reopens it once (the source is "managed" from here on).
+    let left_foreign_runtime = settings.providers.has_foreign_runtime();
     settings.providers.normalize();
+    if left_foreign_runtime && settings.ai_fallback.enabled {
+        settings.setup.local_ai_wizard_completed = false;
+        settings.setup.local_ai_wizard_pending = true;
+    }
 
     // Keep legacy post-processing fields synchronized for compatibility with older code paths.
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
@@ -1776,6 +1717,36 @@ mod tests {
     }
 
     #[test]
+    fn last_vocab_cleanup_ms_round_trips_so_the_four_day_throttle_holds() {
+        assert_eq!(Settings::default().last_vocab_cleanup_ms, 0);
+
+        // Old settings.json without the field: serde default 0 (= never cleaned up).
+        let legacy: Settings = serde_json::from_str("{}").expect("legacy settings");
+        assert_eq!(legacy.last_vocab_cleanup_ms, 0);
+
+        // The frontend writes it via save_settings; it must survive a serialize/deserialize cycle.
+        let mut settings = Settings::default();
+        settings.last_vocab_cleanup_ms = 1_762_000_000_000;
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(json.contains("\"last_vocab_cleanup_ms\":1762000000000"));
+        let reloaded: Settings = serde_json::from_str(&json).expect("reload settings");
+        assert_eq!(reloaded.last_vocab_cleanup_ms, 1_762_000_000_000);
+    }
+
+    #[test]
+    fn removed_remote_expert_opt_in_in_old_setup_block_still_loads() {
+        let settings: Settings = serde_json::from_str(
+            r#"{ "setup": { "local_ai_wizard_completed": true, "local_ai_wizard_pending": false,
+                            "ollama_remote_expert_opt_in": true } }"#,
+        )
+        .expect("old setup block must still deserialize");
+        assert!(settings.setup.local_ai_wizard_completed);
+        assert!(!settings.setup.local_ai_wizard_pending);
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(!rewritten.contains("ollama_remote_expert_opt_in"));
+    }
+
+    #[test]
     fn ai_refinement_module_migration_preserves_legacy_enabled_state() {
         let mut settings = Settings::default();
         settings.ai_fallback.enabled = true;
@@ -1929,6 +1900,38 @@ mod tests {
         ] {
             assert!(!rewritten.contains(removed), "{removed} must not persist");
         }
+    }
+
+    #[test]
+    fn leaving_a_system_runtime_reopens_the_setup_once_for_ai_users() {
+        let raw = |enabled: bool| {
+            format!(
+                r#"{{
+                "ai_fallback": {{ "enabled": {enabled}, "model": "gemma4:e4b" }},
+                "providers": {{ "ollama": {{ "runtime_source": "system", "runtime_path": "C:/Program Files/Ollama/ollama.exe" }} }},
+                "setup": {{ "local_ai_wizard_completed": true, "local_ai_wizard_pending": false }}
+            }}"#
+            )
+        };
+
+        let mut used_ai: Settings = serde_json::from_str(&raw(true)).expect("deserialize");
+        normalize_ai_fallback_fields(&mut used_ai);
+        assert!(!used_ai.setup.local_ai_wizard_completed);
+        assert!(used_ai.setup.local_ai_wizard_pending);
+        assert_eq!(used_ai.providers.ollama.runtime_source, "per_user_zip");
+
+        // Second load: already managed, a wizard the user finished stays finished.
+        used_ai.setup.local_ai_wizard_completed = true;
+        used_ai.setup.local_ai_wizard_pending = false;
+        normalize_ai_fallback_fields(&mut used_ai);
+        assert!(used_ai.setup.local_ai_wizard_completed);
+        assert!(!used_ai.setup.local_ai_wizard_pending);
+
+        // Refinement off: nothing to set up, no wizard popup.
+        let mut no_ai: Settings = serde_json::from_str(&raw(false)).expect("deserialize");
+        normalize_ai_fallback_fields(&mut no_ai);
+        assert!(no_ai.setup.local_ai_wizard_completed);
+        assert!(!no_ai.setup.local_ai_wizard_pending);
     }
 
     #[test]

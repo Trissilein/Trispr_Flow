@@ -16,13 +16,6 @@ export function initLiveDump(): void {
 }
 
 /**
- * Disable live dump
- */
-export function disableLiveDump(): void {
-  dumpEnabled = false;
-}
-
-/**
  * Dump current history to file (throttled)
  */
 export async function dumpHistoryToFile(): Promise<void> {
@@ -48,14 +41,6 @@ export async function dumpHistoryToFile(): Promise<void> {
     // Silent fail - don't interrupt user experience
     console.debug("Live dump failed (non-critical):", error);
   }
-}
-
-/**
- * Force immediate dump (e.g., before export)
- */
-export async function flushDump(): Promise<void> {
-  lastDumpTime = 0; // Reset throttle
-  await dumpHistoryToFile();
 }
 
 /**

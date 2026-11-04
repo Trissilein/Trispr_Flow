@@ -115,8 +115,7 @@ pub(crate) use ai_fallback::model_verify::{
     replace_ollama_model, rollback_ollama_model_update, verify_ollama_model,
 };
 pub(crate) use runtime_commands::{
-    get_dependency_preflight_status, get_runtime_diagnostics, get_runtime_metrics_snapshot,
-    get_settings, get_startup_status, record_runtime_metric,
+    get_dependency_preflight_status, get_runtime_diagnostics, get_settings, get_startup_status,
 };
 const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
@@ -3139,11 +3138,6 @@ pub fn run() {
                 refinement_last_success_ms: AtomicU64::new(0),
                 refinement_last_success_model: Mutex::new(None),
                 ollama_idle_release_generation: AtomicU64::new(0),
-                runtime_start_attempts: AtomicU64::new(0),
-                runtime_start_failures: AtomicU64::new(0),
-                refinement_timeouts: AtomicU64::new(0),
-                refinement_fallback_failed: AtomicU64::new(0),
-                refinement_fallback_timed_out: AtomicU64::new(0),
                 paste_arbiter: crate::paste_arbiter::PasteArbiter::default(),
                 managed_ollama_child: Mutex::new(None),
                 managed_whisper_server_child: Mutex::new(None),
@@ -3852,8 +3846,6 @@ pub fn run() {
             verify_ollama_runtime,
             import_ollama_model_from_file,
             ping_refinement_model,
-            get_runtime_metrics_snapshot,
-            record_runtime_metric,
             frontend_heartbeat,
             log_frontend_event,
             pull_ollama_model,

@@ -9,8 +9,7 @@ use crate::postprocessing::process_transcript;
 use crate::refinement_adaptation::{record_refinement_observation, RefinementObservation};
 use crate::state::{
     mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
-    normalize_ai_fallback_fields, push_history_entry_inner, record_refinement_fallback_failed,
-    record_refinement_timeout, save_settings_file, AppState, Settings,
+    normalize_ai_fallback_fields, push_history_entry_inner, save_settings_file, AppState, Settings,
 };
 use crate::transcription::{
     rms_i16, should_drop_transcript, transcribe_audio, RefinementGateDecision, TranscriptionResult,
@@ -1831,7 +1830,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 } else {
                     "prepare_failed"
                 };
-                record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                 app_handle.state::<AppState>().paste_arbiter.settle(
                     &app_handle,
                     &job_id,
@@ -1879,7 +1877,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         } else {
                             "prepare_failed"
                         };
-                        record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                         app_handle.state::<AppState>().paste_arbiter.settle(
                             &app_handle,
                             &job_id,
@@ -2119,9 +2116,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         setup.model,
                         e
                     );
-                    if matches!(e, AIError::Timeout) {
-                        record_refinement_timeout(app_handle.state::<AppState>().inner());
-                    }
                     record_refinement_observation(
                         &app_handle,
                         &effective_model,
@@ -2131,7 +2125,6 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             RefinementObservation::Failure
                         },
                     );
-                    record_refinement_fallback_failed(app_handle.state::<AppState>().inner());
                     app_handle.state::<AppState>().paste_arbiter.settle(
                         &app_handle,
                         &job_id,

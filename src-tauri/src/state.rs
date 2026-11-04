@@ -765,11 +765,6 @@ pub(crate) struct AppState {
     pub(crate) refinement_last_success_ms: AtomicU64,
     pub(crate) refinement_last_success_model: Mutex<Option<String>>,
     pub(crate) ollama_idle_release_generation: AtomicU64,
-    pub(crate) runtime_start_attempts: AtomicU64,
-    pub(crate) runtime_start_failures: AtomicU64,
-    pub(crate) refinement_timeouts: AtomicU64,
-    pub(crate) refinement_fallback_failed: AtomicU64,
-    pub(crate) refinement_fallback_timed_out: AtomicU64,
     /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
     pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
     /// Handle to the managed Ollama child process for cleanup on app exit.
@@ -807,45 +802,6 @@ pub(crate) struct AppState {
     pub(crate) managed_process_job: Option<ManagedProcessJob>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct RuntimeMetricsSnapshot {
-    pub(crate) runtime_start_attempts: u64,
-    pub(crate) runtime_start_failures: u64,
-    pub(crate) refinement_timeouts: u64,
-    pub(crate) refinement_fallback_failed: u64,
-    pub(crate) refinement_fallback_timed_out: u64,
-}
-
-pub(crate) fn record_runtime_start_attempt(state: &AppState) {
-    state
-        .runtime_start_attempts
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_runtime_start_failure(state: &AppState) {
-    state
-        .runtime_start_failures
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_refinement_timeout(state: &AppState) {
-    state
-        .refinement_timeouts
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_refinement_fallback_failed(state: &AppState) {
-    state
-        .refinement_fallback_failed
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn record_refinement_fallback_timed_out(state: &AppState) {
-    state
-        .refinement_fallback_timed_out
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
 pub(crate) fn record_refinement_success(state: &AppState, model: &str) {
     state
         .refinement_last_success_ms
@@ -860,26 +816,6 @@ pub(crate) fn record_refinement_success(state: &AppState, model: &str) {
     } else {
         Some(trimmed.to_string())
     };
-}
-
-pub(crate) fn get_runtime_metrics_snapshot(state: &AppState) -> RuntimeMetricsSnapshot {
-    RuntimeMetricsSnapshot {
-        runtime_start_attempts: state
-            .runtime_start_attempts
-            .load(std::sync::atomic::Ordering::Relaxed),
-        runtime_start_failures: state
-            .runtime_start_failures
-            .load(std::sync::atomic::Ordering::Relaxed),
-        refinement_timeouts: state
-            .refinement_timeouts
-            .load(std::sync::atomic::Ordering::Relaxed),
-        refinement_fallback_failed: state
-            .refinement_fallback_failed
-            .load(std::sync::atomic::Ordering::Relaxed),
-        refinement_fallback_timed_out: state
-            .refinement_fallback_timed_out
-            .load(std::sync::atomic::Ordering::Relaxed),
-    }
 }
 
 /// Only "minimized" is a real start state; unknown values and the legacy "tray" become "normal".

@@ -119,7 +119,6 @@ pub(crate) fn schedule_deadline(app_handle: AppHandle, job_id: String, timeout_m
                 .paste_arbiter
                 .settle(&app_handle, &job_id, PasteOutcome::RawTimeout, None);
         if timed_out {
-            crate::state::record_refinement_fallback_timed_out(state.inner());
             warn!("[paste_arbiter:{job_id}] deadline hit after {timeout_ms}ms — raw pasted");
         }
     });

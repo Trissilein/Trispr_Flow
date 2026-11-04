@@ -6,10 +6,7 @@ use crate::managed_child_slot_status;
 use crate::now_iso;
 use crate::paths::resolve_data_path;
 use crate::spawn_managed_child;
-use crate::state::{
-    record_runtime_start_attempt, record_runtime_start_failure, save_settings_file, AppState,
-    Settings,
-};
+use crate::state::{save_settings_file, AppState, Settings};
 use crate::terminate_managed_child_slot;
 use crate::{update_runtime_diagnostics, update_startup_status};
 use serde::{Deserialize, Serialize};
@@ -4475,7 +4472,6 @@ impl StartContext<'_> {
 
 fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult, String> {
     let state = app.state::<AppState>();
-    record_runtime_start_attempt(state.inner());
     let settings_snapshot = state
         .settings
         .read()
@@ -4491,7 +4487,6 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         );
     }
     let mark_failure = |stage: &str, message: String| {
-        record_runtime_start_failure(state.inner());
         update_startup_status(app, state.inner(), |status| {
             status.ollama_ready = false;
             status.ollama_starting = false;
@@ -4603,7 +4598,6 @@ fn start_ollama_runtime_impl(app: &AppHandle) -> Result<OllamaRuntimeStartResult
         } => {
             // The selected runtime failed; the previous one serves again. The request still
             // failed (the user asked for another version), but the server is up.
-            record_runtime_start_failure(state.inner());
             let previous_source = source.clone();
             let own_version = parse_ollama_version(&binary);
             let previous_recorded = version_to_record_for_binary(

@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tauri::AppHandle;
-use tracing::warn;
 
 /// Module id of the opus export sidecar package (`modules/opus/`).
 pub const OPUS_MODULE_ID: &str = "opus";
@@ -23,13 +22,6 @@ pub struct OpusEncodeResult {
     pub output_size_bytes: u64,
     pub compression_ratio: f32,
     pub duration_ms: u64,
-}
-
-/// Result of probing the sidecar for FFmpeg/libopus availability.
-#[derive(Serialize, Deserialize, Clone)]
-pub struct OpusProbeResult {
-    pub available: bool,
-    pub version: String,
 }
 
 /// OPUS encoder configuration handed to the sidecar.
@@ -174,63 +166,6 @@ pub fn concat_with_sidecar(
     Ok(())
 }
 
-/// Probe the sidecar for FFmpeg/libopus availability + version.
-pub fn probe_with_sidecar(sidecar: &Path) -> Result<OpusProbeResult, String> {
-    let mut cmd = Command::new(sidecar);
-    no_window(&mut cmd);
-    cmd.arg("probe")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let out = cmd
-        .output()
-        .map_err(|e| format!("Failed to run opus sidecar: {e}"))?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    serde_json::from_str::<OpusProbeResult>(stdout.trim())
-        .map_err(|e| format!("Failed to parse opus sidecar probe: {e}; raw: {stdout}"))
-}
-
-#[tauri::command]
-pub(crate) fn encode_to_opus(
-    app: AppHandle,
-    input_path: String,
-    output_path: String,
-    bitrate_kbps: Option<u32>,
-) -> Result<OpusEncodeResult, String> {
-    let sidecar =
-        resolve_sidecar(&app).ok_or_else(|| "The opus module is not installed.".to_string())?;
-
-    let allowed_root = crate::paths::resolve_base_dir(&app);
-    let input = crate::paths::validate_path_within(&input_path, &allowed_root)?;
-    let output = crate::paths::validate_path_within(&output_path, &allowed_root)?;
-
-    let mut config = OpusEncoderConfig::default();
-    if let Some(bitrate) = bitrate_kbps {
-        config.bitrate_kbps = bitrate;
-    }
-    encode_with_sidecar(&sidecar, &input, &output, &config)
-}
-
-#[tauri::command]
-pub(crate) fn check_ffmpeg(app: AppHandle) -> Result<bool, String> {
-    match resolve_sidecar(&app) {
-        Some(sidecar) => Ok(probe_with_sidecar(&sidecar)
-            .map(|p| p.available)
-            .unwrap_or(false)),
-        None => Ok(false),
-    }
-}
-
-#[tauri::command]
-pub(crate) fn get_ffmpeg_version_info(app: AppHandle) -> Result<String, String> {
-    let sidecar =
-        resolve_sidecar(&app).ok_or_else(|| "The opus module is not installed.".to_string())?;
-    let probe = probe_with_sidecar(&sidecar)?;
-    if probe.version.is_empty() {
-        warn!("opus sidecar reported an empty FFmpeg version string");
-    }
-    Ok(probe.version)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,14 +181,6 @@ mod tests {
         assert_eq!(result.output_size_bytes, 18223);
         assert!((result.compression_ratio - 0.284388).abs() < 1e-5);
         assert_eq!(result.duration_ms, 37);
-    }
-
-    #[test]
-    fn parses_sidecar_probe_json() {
-        let raw = r#"{"available":true,"version":"ffmpeg version 7.1"}"#;
-        let probe: OpusProbeResult = serde_json::from_str(raw).expect("probe json parses");
-        assert!(probe.available);
-        assert_eq!(probe.version, "ffmpeg version 7.1");
     }
 
     #[test]

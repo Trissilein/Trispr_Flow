@@ -861,29 +861,6 @@ pub(crate) fn warm_transcribe_runtime(app: &AppHandle, state: &AppState, setting
     }
 }
 
-pub(crate) fn toggle_transcribe_state(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    if !settings.transcribe_enabled {
-        let _ = app.emit("transcribe:state", "idle");
-        emit_transcribe_idle(app);
-        update_transcribe_overlay(app, false);
-        return;
-    }
-    let active = state.transcribe_active.load(Ordering::Relaxed);
-    if active {
-        stop_transcribe_monitor(app, &state);
-    } else if let Err(err) = start_transcribe_monitor(app, &state, &settings) {
-        crate::emit_error(app, AppError::AudioDevice(err), Some("System Audio"));
-        state.transcribe_active.store(false, Ordering::Relaxed);
-        let _ = app.emit("transcribe:state", "idle");
-    }
-}
-
 #[cfg(target_os = "windows")]
 fn rms_f32(samples: &[f32]) -> f32 {
     if samples.is_empty() {
@@ -1298,13 +1275,7 @@ fn transcribe_worker(
     if auto_save {
         flush_system_audio_to_session(&mut save_buffer);
         match crate::session_manager::finalize_for("output") {
-            Ok(Some(path)) => {
-                let state = app.state::<AppState>();
-                *state
-                    .last_system_recording_path
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    Some(path.to_string_lossy().to_string());
+            Ok(Some(_)) => {
                 if diagnostics_enabled {
                     info!("System audio session finalized");
                 }

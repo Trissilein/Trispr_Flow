@@ -1,10 +1,9 @@
-use super::error::AIError;
+use super::prepare_refinement;
 use super::provider::{is_ssrf_target, ollama_endpoint_candidates, ping_ollama_quick};
-use super::{prepare_refinement, update_and_persist_settings};
-use crate::state::{normalize_ai_fallback_fields, AppState};
+use crate::state::AppState;
 use crate::{terminate_managed_child_slot, update_runtime_diagnostics, update_startup_status};
 use std::sync::atomic::Ordering;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 pub(crate) use crate::ollama_runtime::{
     detect_ollama_runtime, download_ollama_runtime, fetch_ollama_online_versions,
@@ -90,52 +89,6 @@ fn fetch_local_layer_digests(endpoint: &str, model: &str) -> Vec<String> {
         );
     }
     Vec::new()
-}
-
-#[tauri::command]
-pub(crate) async fn refine_transcript(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    transcript: String,
-) -> Result<serde_json::Value, String> {
-    let settings_snapshot = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-
-    let setup = prepare_refinement(&app, &settings_snapshot)?;
-
-    if setup.repaired {
-        let model = setup.model.clone();
-        update_and_persist_settings(&app, state.inner(), |settings| {
-            settings.ai_fallback.model = model.clone();
-            settings.providers.ollama.preferred_model = model.clone();
-            settings.postproc_llm_model = model;
-            normalize_ai_fallback_fields(settings);
-            Ok(())
-        })?;
-    }
-
-    let app_clone = app.clone();
-    let prompt_profile = setup.options.prompt_profile.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        setup
-            .provider
-            .refine_transcript(&transcript, &setup.model, &setup.options)
-    })
-    .await
-    .map_err(|e| format!("refine_transcript task failed: {}", e))?;
-
-    if let Err(AIError::Timeout | AIError::OllamaNotRunning) = &result {
-        let _ = app_clone.emit("ai_fallback:health_degraded", ());
-    }
-
-    let result = result.map_err(|e| e.to_string())?;
-    if let Some(tier_update) = &result.tier_update {
-        super::persist_tier_update(&app, state.inner(), &prompt_profile, tier_update);
-    }
-    serde_json::to_value(&result).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -2700,17 +2700,8 @@ fn run_toggle_processor(
 
     if auto_save {
         flush_mic_audio_to_session(&mut save_buffer);
-        match crate::session_manager::finalize_for("mic") {
-            Ok(Some(path)) => {
-                let state = app_handle.state::<AppState>();
-                *state
-                    .last_mic_recording_path
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    Some(path.to_string_lossy().to_string());
-            }
-            Ok(None) => {}
-            Err(err) => error!("Failed to finalize mic audio session: {}", err),
+        if let Err(err) = crate::session_manager::finalize_for("mic") {
+            error!("Failed to finalize mic audio session: {}", err);
         }
     }
 }
@@ -3328,15 +3319,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         // Save recording as OPUS for optional later processing/export.
         // Only save if duration > 10 seconds (avoid short dictations)
         if duration_ms >= 10_000 {
-            if let Ok(Some(opus_path)) =
-                crate::save_recording_opus(&app_handle, &samples, "mic", None)
-            {
-                let state_ref = app_handle.state::<crate::state::AppState>();
-                *state_ref
-                    .last_mic_recording_path
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(opus_path);
-            }
+            let _ = crate::save_recording_opus(&app_handle, &samples, "mic", None);
         }
 
         let mut recorder = state
@@ -3368,29 +3351,7 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
     });
 }
 
-#[tauri::command]
-pub(crate) fn get_last_recording_path(
-    source: String,
-    state: State<'_, AppState>,
-) -> Result<Option<String>, String> {
-    let path = if source == "output" || source == "system" {
-        state
-            .last_system_recording_path
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    } else {
-        state
-            .last_mic_recording_path
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    };
-    Ok(path)
-}
-
-#[tauri::command]
-pub(crate) fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
+fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
     let data_dir = crate::paths::resolve_base_dir(&app);
     let recordings_dir = data_dir.join("recordings");
 
@@ -3610,22 +3571,6 @@ pub(crate) fn handle_toggle_async(app: AppHandle) {
             let _ = start_recording_with_settings(&app, &state, &settings);
         }
     }
-}
-
-#[tauri::command]
-pub(crate) fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    start_recording_with_settings(&app, &state, &settings)
-}
-
-#[tauri::command]
-pub(crate) fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    stop_recording_async(app, &state);
-    Ok(())
 }
 
 #[cfg(test)]

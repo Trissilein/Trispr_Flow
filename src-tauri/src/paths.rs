@@ -47,36 +47,13 @@ pub(crate) fn resolve_data_path(app: &AppHandle, filename: &str) -> PathBuf {
     base.join(filename)
 }
 
-#[tauri::command]
-pub(crate) fn open_log_directory() -> Result<(), String> {
-    let log_dir = std::env::var("LOCALAPPDATA")
-        .map(|d| PathBuf::from(d).join("Trispr Flow").join("logs"))
-        .map_err(|e| e.to_string())?;
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        Command::new("explorer.exe")
-            .arg(&log_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open log directory: {}", e))?;
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        use std::process::Command;
-        Command::new("open")
-            .arg(&log_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open log directory: {}", e))?;
-        Ok(())
-    }
-}
-
 /// Validate that a path resolves within the allowed root directory.
 /// For existing files: canonicalize the full path.
 /// For new files (output): canonicalize the parent directory.
+///
+/// No command calls this right now (`encode_to_opus` was its last caller). Kept on purpose:
+/// docs/SECURITY.md names it as the guard for every command that takes a user-controlled path.
+#[allow(dead_code)]
 pub(crate) fn validate_path_within(path_str: &str, allowed_root: &Path) -> Result<PathBuf, String> {
     // Reject UNC paths (\\server\share) before canonicalize — they trigger an SMB
     // round-trip which can leak NTLM credentials even if starts_with() later rejects them.

@@ -1147,23 +1147,3 @@ fn overlay_state_eval_js(state: &OverlayState) -> String {
         )
     }
 }
-
-/// Get current overlay position (for settings persistence)
-#[allow(dead_code)]
-pub fn get_overlay_position(app: &AppHandle) -> Option<(f64, f64)> {
-    app.get_webview_window("overlay")
-        .and_then(|w| w.outer_position().ok())
-        .map(|pos| (pos.x as f64, pos.y as f64))
-}
-
-/// Set overlay position (from saved settings)
-#[allow(dead_code)]
-pub fn set_overlay_position(app: &AppHandle, x: f64, y: f64) -> Result<(), String> {
-    let window = app
-        .get_webview_window("overlay")
-        .ok_or("Overlay window not found")?;
-
-    window
-        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
-        .map_err(|e| format!("Failed to set overlay position: {}", e))
-}

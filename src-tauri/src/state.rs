@@ -736,8 +736,6 @@ pub(crate) struct FrontendWatchdogState {
 pub struct TargetIdentity {
     pub hwnd: isize,
     pub pid: u32,
-    #[allow(dead_code)]
-    pub timestamp_ms: u64,
 }
 
 #[derive(Default)]
@@ -774,10 +772,6 @@ pub(crate) struct AppState {
     pub(crate) refinement_fallback_timed_out: AtomicU64,
     /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
     pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
-    /// Last recorded OPUS file path for mic input.
-    pub(crate) last_mic_recording_path: Mutex<Option<String>>,
-    /// Last recorded OPUS file path for system audio.
-    pub(crate) last_system_recording_path: Mutex<Option<String>>,
     /// Handle to the managed Ollama child process for cleanup on app exit.
     pub(crate) managed_ollama_child: Mutex<Option<std::process::Child>>,
     /// Handle to the managed Whisper-Server child process for cleanup on app exit.

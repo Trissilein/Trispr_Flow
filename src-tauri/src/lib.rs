@@ -55,17 +55,12 @@ use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info, warn};
 
-pub(crate) use audio::{
-    get_last_recording_path, get_recordings_directory, open_recordings_directory,
-};
+pub(crate) use audio::open_recordings_directory;
 pub(crate) use history_partition::{
-    add_history_entry, add_transcribe_entry, clear_active_transcript_history,
-    delete_active_transcript_entry, get_history, get_transcribe_history, list_history_partitions,
-    load_history_partition, save_transcript,
+    clear_active_transcript_history, delete_active_transcript_entry, get_history,
+    get_transcribe_history, list_history_partitions, load_history_partition, save_transcript,
 };
-pub(crate) use hotkeys::{get_hotkey_conflicts, test_hotkey, validate_hotkey};
-pub(crate) use opus::{check_ffmpeg, encode_to_opus, get_ffmpeg_version_info};
-pub(crate) use paths::open_log_directory;
+pub(crate) use hotkeys::validate_hotkey;
 pub(crate) use session_manager::{clear_crash_recovery, save_crash_recovery};
 pub(crate) use util::{frontend_heartbeat, log_frontend_event};
 
@@ -87,7 +82,7 @@ macro_rules! guarded_command {
 }
 
 use crate::ai_fallback::provider::ping_ollama_quick;
-use crate::audio::{list_audio_devices, list_output_devices, start_recording, stop_recording};
+use crate::audio::{list_audio_devices, list_output_devices};
 use crate::history_partition::PartitionedHistory;
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
@@ -104,15 +99,15 @@ use crate::state::{
 };
 use crate::transcription::{
     expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
-    stop_transcribe_monitor_and_release_whisper, toggle_transcribe_state,
+    stop_transcribe_monitor_and_release_whisper,
 };
 pub(crate) use ai_fallback::commands::{
     check_ollama_model_updates, delete_ollama_model, detect_ollama_runtime,
     download_ollama_runtime, fetch_ollama_models_with_size, fetch_ollama_online_versions,
     get_ollama_model_info, import_ollama_model_from_file, install_ollama_runtime,
     list_ollama_runtime_versions, ping_refinement_model, pull_ollama_model, purge_gpu_memory,
-    refine_transcript, start_ollama_runtime, stop_ollama_runtime, unload_ollama_model,
-    unload_ollama_model_impl, verify_ollama_runtime, warmup_ollama_model, warmup_ollama_model_impl,
+    start_ollama_runtime, stop_ollama_runtime, unload_ollama_model, unload_ollama_model_impl,
+    verify_ollama_runtime, warmup_ollama_model, warmup_ollama_model_impl,
 };
 pub(crate) use ai_fallback::model_info::{get_ollama_model_details, open_model_page};
 pub(crate) use ai_fallback::model_verify::{
@@ -1359,12 +1354,6 @@ fn list_modules(
     )
 }
 
-#[tauri::command]
-fn scan_module_packages(app: AppHandle) -> Result<module_package::ModulePackageScanReport, String> {
-    let modules_dir = crate::paths::resolve_modules_dir(&app);
-    module_package::scan_modules_dir(&modules_dir)
-}
-
 fn scan_installed_module_ids_lossy(app: &AppHandle) -> std::collections::HashSet<String> {
     let modules_dir = crate::paths::resolve_modules_dir(app);
     match module_package::scan_installed_module_ids(&modules_dir) {
@@ -1770,22 +1759,11 @@ fn save_window_state(
 }
 
 #[tauri::command]
-fn toggle_transcribe(app: AppHandle) -> Result<(), String> {
-    toggle_transcribe_state(&app);
-    Ok(())
-}
-
-#[tauri::command]
 fn expand_transcribe_backlog(
     app: AppHandle,
 ) -> Result<transcription::TranscribeBacklogStatus, String> {
     cancel_backlog_auto_expand(&app);
     expand_transcribe_backlog_inner(&app)
-}
-
-#[tauri::command]
-fn paste_transcript_text(app: AppHandle, text: String) -> Result<(), String> {
-    paste_text(&app, &text)
 }
 
 #[tauri::command]
@@ -1855,196 +1833,6 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
     })
     .await
     .unwrap_or_else(|e| Err(format!("apply_model panicked: {e}")))
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct HardwareInfo {
-    pub gpu_name: String,
-    pub gpu_vram: String,
-    pub backend_recommended: String, // "cuda" | "vulkan" | "cpu"
-    pub cuda_available: bool,
-    pub driver_version: String,
-    pub update_url: Option<String>,
-}
-
-#[tauri::command]
-fn get_hardware_info() -> Result<HardwareInfo, String> {
-    #[cfg(target_os = "windows")]
-    {
-        use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
-
-        let mut gpu_name = "Unknown".to_string();
-        let mut cuda_available = false;
-        let mut driver_version = "Unknown".to_string();
-        let mut update_url = None;
-
-        // 1. Detect GPU via DXGI
-        if let Ok(factory) = unsafe { CreateDXGIFactory1::<IDXGIFactory1>() } {
-            let mut adapter_index = 0;
-            while let Ok(adapter) = unsafe { factory.EnumAdapters1(adapter_index) } {
-                if let Ok(desc) = unsafe { adapter.GetDesc1() } {
-                    let name = String::from_utf16_lossy(&desc.Description);
-                    let name = name.trim_matches(char::from(0)).trim().to_string();
-
-                    // Prioritize dedicated GPUs (especially NVIDIA)
-                    if name.to_lowercase().contains("nvidia") {
-                        gpu_name = name;
-                        break;
-                    } else if gpu_name == "Unknown"
-                        || gpu_name.to_lowercase().contains("intel")
-                        || gpu_name.to_lowercase().contains("microsoft")
-                    {
-                        gpu_name = name;
-                    }
-                }
-                adapter_index += 1;
-            }
-        }
-
-        // 2. Check for CUDA readiness
-        // We look for the NVIDIA compiler/runtime DLL which is a good indicator of driver support.
-        let cuda_dlls = ["nvrtc64_120_0.dll", "nvrtc64_112_0.dll", "nvcuda.dll"];
-        for dll in cuda_dlls {
-            if unsafe {
-                windows::Win32::System::LibraryLoader::GetModuleHandleA(windows::core::PCSTR(
-                    format!("{}\0", dll).as_ptr(),
-                ))
-                .is_ok()
-            } {
-                cuda_available = true;
-                break;
-            }
-            // Also check on disk if not loaded
-            if which::which(dll).is_ok() {
-                cuda_available = true;
-                break;
-            }
-        }
-
-        // Manual check in System32 for nvcuda.dll
-        if !cuda_available {
-            let sys32_nvcuda = std::path::PathBuf::from("C:\\Windows\\System32\\nvcuda.dll");
-            if sys32_nvcuda.exists() {
-                cuda_available = true;
-            }
-        }
-
-        // 3. Get VRAM and Driver Version via nvidia-smi if available
-        let mut gpu_vram = "Unknown".to_string();
-        if gpu_name.to_lowercase().contains("nvidia") {
-            use std::process::Command;
-            let mut cmd = Command::new("nvidia-smi");
-            cmd.args(&[
-                "--query-gpu=memory.total,driver_version",
-                "--format=csv,noheader,nounits",
-            ]);
-
-            #[cfg(target_os = "windows")]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x08000000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-
-            if let Ok(output) = cmd.output() {
-                if output.status.success() {
-                    let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
-                    if parts.len() >= 2 {
-                        if let Ok(total_mb) = parts[0].parse::<f64>() {
-                            gpu_vram = format!("{:.1} GB", total_mb / 1024.0);
-                        }
-                        driver_version = parts[1].to_string();
-                    }
-                }
-            }
-
-            if driver_version == "Unknown" || driver_version.is_empty() {
-                update_url = Some("https://www.nvidia.com/Download/index.aspx".to_string());
-            }
-        }
-
-        let backend_recommended = if cuda_available {
-            "cuda".to_string()
-        } else if gpu_name.to_lowercase().contains("amd")
-            || gpu_name.to_lowercase().contains("intel")
-        {
-            "vulkan".to_string()
-        } else {
-            "cpu".to_string()
-        };
-
-        Ok(HardwareInfo {
-            gpu_name,
-            gpu_vram,
-            backend_recommended,
-            cuda_available,
-            driver_version,
-            update_url,
-        })
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(HardwareInfo {
-            gpu_name: "Generic".to_string(),
-            gpu_vram: "Unknown".to_string(),
-            backend_recommended: "cpu".to_string(),
-            cuda_available: false,
-            driver_version: "N/A".to_string(),
-            update_url: None,
-        })
-    }
-}
-
-#[tauri::command]
-async fn get_gpu_vram_usage() -> Result<String, String> {
-    // Query NVIDIA GPU VRAM usage via nvidia-smi — wrapped in spawn_blocking to
-    // avoid blocking the Tokio worker thread during the nvidia-smi process spawn.
-    tauri::async_runtime::spawn_blocking(|| {
-        use std::process::Command;
-
-        let mut cmd = Command::new("nvidia-smi");
-        cmd.args(&[
-            "--query-gpu=memory.used,memory.total",
-            "--format=csv,noheader,nounits",
-        ]);
-
-        // On Windows, hide the command window to prevent visual pop-ups
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let output = cmd
-            .output()
-            .map_err(|_| "nvidia-smi not found".to_string())?;
-
-        if !output.status.success() {
-            return Ok(String::new());
-        }
-
-        let result = String::from_utf8(output.stdout)
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-
-        let parts: Vec<&str> = result.split(',').map(|s| s.trim()).collect();
-        if parts.len() == 2 {
-            if let (Ok(used_mb), Ok(total_mb)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>())
-            {
-                let used_gb = used_mb / 1024.0;
-                let total_gb = total_mb / 1024.0;
-                return Ok(format!("{:.1} GB / {:.1} GB", used_gb, total_gb));
-            }
-        }
-
-        Ok(String::new())
-    })
-    .await
-    .unwrap_or_else(|_| Ok(String::new()))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -3357,8 +3145,6 @@ pub fn run() {
                 refinement_fallback_failed: AtomicU64::new(0),
                 refinement_fallback_timed_out: AtomicU64::new(0),
                 paste_arbiter: crate::paste_arbiter::PasteArbiter::default(),
-                last_mic_recording_path: Mutex::new(None),
-                last_system_recording_path: Mutex::new(None),
                 managed_ollama_child: Mutex::new(None),
                 managed_whisper_server_child: Mutex::new(None),
                 whisper_server_port: AtomicU16::new(crate::whisper_server::WHISPER_SERVER_PORT),
@@ -4013,7 +3799,6 @@ pub fn run() {
             save_window_state,
             save_window_visibility_state,
             list_modules,
-            scan_module_packages,
             enable_module,
             disable_module,
             get_module_health,
@@ -4039,27 +3824,13 @@ pub fn run() {
             delete_active_transcript_entry,
             list_history_partitions,
             load_history_partition,
-            add_history_entry,
-            add_transcribe_entry,
-            start_recording,
-            stop_recording,
-            toggle_transcribe,
             expand_transcribe_backlog,
-            paste_transcript_text,
             apply_model,
             validate_hotkey,
-            test_hotkey,
-            get_hotkey_conflicts,
             save_crash_recovery,
             clear_crash_recovery,
-            encode_to_opus,
-            check_ffmpeg,
             get_dependency_preflight_status,
-            get_ffmpeg_version_info,
-            get_last_recording_path,
-            get_recordings_directory,
             open_recordings_directory,
-            open_log_directory,
             check_ollama_model_updates,
             check_ollama_model_requirements,
             get_ollama_model_details,
@@ -4080,7 +3851,6 @@ pub fn run() {
             start_ollama_runtime,
             verify_ollama_runtime,
             import_ollama_model_from_file,
-            refine_transcript,
             ping_refinement_model,
             get_runtime_metrics_snapshot,
             record_runtime_metric,
@@ -4090,9 +3860,7 @@ pub fn run() {
             delete_ollama_model,
             get_ollama_model_info,
             unload_ollama_model,
-            get_gpu_vram_usage,
             get_gpu_stats,
-            get_hardware_info,
             purge_gpu_memory,
             stop_ollama_runtime,
         ])

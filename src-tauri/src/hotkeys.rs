@@ -1,21 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use tauri::{AppHandle, State};
-
-use crate::state::AppState;
-// tauri_plugin_global_shortcut::GlobalShortcutExt not needed here.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
     pub valid: bool,
     pub error: Option<String>,
     pub formatted: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConflictInfo {
-    pub hotkey: String,
-    pub conflicting_with: Vec<String>,
 }
 
 /// Keys that can be registered without a modifier (media / volume keys).
@@ -164,82 +153,9 @@ fn format_hotkey(key: &str) -> String {
     formatted_parts.join("+")
 }
 
-/// Detects conflicts between hotkeys
-pub fn detect_conflicts(hotkeys: Vec<String>) -> Vec<ConflictInfo> {
-    let mut conflicts = Vec::new();
-    let mut seen = HashSet::new();
-
-    for (i, hotkey) in hotkeys.iter().enumerate() {
-        let normalized = normalize_hotkey(hotkey);
-
-        if seen.contains(&normalized) {
-            // Find which hotkeys conflict
-            let conflicting: Vec<String> = hotkeys
-                .iter()
-                .enumerate()
-                .filter(|(j, h)| *j != i && normalize_hotkey(h) == normalized)
-                .map(|(_, h)| h.clone())
-                .collect();
-
-            if !conflicting.is_empty() {
-                conflicts.push(ConflictInfo {
-                    hotkey: hotkey.clone(),
-                    conflicting_with: conflicting,
-                });
-            }
-        }
-
-        seen.insert(normalized);
-    }
-
-    conflicts
-}
-
-/// Normalizes a hotkey for comparison (lowercase, consistent separator)
-fn normalize_hotkey(key: &str) -> String {
-    key.to_lowercase().replace(" ", "")
-}
-
-/// Tests if a hotkey can be registered (without actually activating it)
-pub fn test_hotkey_registration(_app: &AppHandle, key: &str) -> Result<(), String> {
-    // First validate format
-    let validation = validate_hotkey_format(key);
-    if !validation.valid {
-        return Err(validation
-            .error
-            .unwrap_or_else(|| "Invalid hotkey".to_string()));
-    }
-
-    // Try to register (and immediately unregister)
-    // Note: This is a simplified test. In a real scenario, we'd need to check
-    // if the hotkey is already registered and handle that case.
-    // For now, we just validate the format.
-
-    Ok(())
-}
-
 #[tauri::command]
 pub(crate) fn validate_hotkey(key: String) -> ValidationResult {
     validate_hotkey_format(&key)
-}
-
-#[tauri::command]
-pub(crate) fn test_hotkey(app: AppHandle, key: String) -> Result<(), String> {
-    test_hotkey_registration(&app, &key)
-}
-
-#[tauri::command]
-pub(crate) fn get_hotkey_conflicts(state: State<'_, AppState>) -> Vec<ConflictInfo> {
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let hotkeys = vec![
-        settings.hotkey_ptt.clone(),
-        settings.hotkey_toggle.clone(),
-        settings.transcribe_hotkey.clone(),
-    ];
-    detect_conflicts(hotkeys)
 }
 
 #[cfg(test)]
@@ -271,25 +187,5 @@ mod tests {
     fn test_format_hotkey() {
         let formatted = format_hotkey("ctrl+shift+space");
         assert_eq!(formatted, "Ctrl+Shift+Space");
-    }
-
-    #[test]
-    fn test_detect_conflicts() {
-        let hotkeys = vec![
-            "Ctrl+Shift+Space".to_string(),
-            "Ctrl+Shift+M".to_string(),
-            "ctrl+shift+space".to_string(), // Conflict with first
-        ];
-
-        let conflicts = detect_conflicts(hotkeys);
-        assert!(!conflicts.is_empty());
-    }
-
-    #[test]
-    fn test_normalize_hotkey() {
-        assert_eq!(
-            normalize_hotkey("Ctrl+Shift+Space"),
-            normalize_hotkey("ctrl+shift+space")
-        );
     }
 }

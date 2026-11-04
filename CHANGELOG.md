@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Vocab cleanup throttle** now holds: the backend knows `last_vocab_cleanup_ms` and saves it in `settings.json`, so the LLM cleanup runs at most every 4 days instead of at every app start. Old settings files load as "never cleaned up".
 - **Dead settings and checks removed**: `setup.ollama_remote_expert_opt_in` (old `settings.json` files with it still load), the `"tray"` value in the `main_window_start_state` type, the always-true `provider == "ollama"` checks in the refinement path (`audio.rs`, `main.ts`).
 - **Runtime toast** "No runtime detected" now says "Install the managed local runtime." (was: "select system Ollama", an option that no longer exists).
+- **Installer** no longer downloads the system Ollama or pulls `qwen3.5:4b`: the managed runtime and model are set up by the app on first launch. The seeded `settings.json` drops the dead fields (`cloud_fallback`, `fallback_provider`, `execution_mode`, `strict_local_mode`) and uses `gemma4:e4b`. Installer build not tested yet.
+- **Ex-system-Ollama users** with refinement enabled get the local-AI setup wizard once on the first start after the update (their system/manual runtime is replaced by the managed one, which is not installed yet).
 - **Docs and scripts**: dropped references to the missing `test:docs`, benchmark and `qa:assistant` scripts (`CONTRIBUTING.md`, `docs/README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/TASK_SCHEDULE.md`); `scripts/ollama-soak.mjs` skips the request phases with a message when the local German fixture (`bench/fixtures/tts-de-kitten`) is missing instead of crashing.
 
 ## [0.9.0] - 2026-11-03

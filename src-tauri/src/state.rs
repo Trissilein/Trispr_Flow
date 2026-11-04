@@ -1273,7 +1273,15 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     }
     settings.ai_fallback.custom_prompt_enabled = settings.ai_fallback.prompt_profile == "custom";
     settings.ai_fallback.use_default_prompt = false;
+    // A user who ran on a system / manual Ollama has no managed runtime yet and may have no Ollama
+    // running at all: the start-up health check then reads nothing and never reopens the setup, so
+    // the migration reopens it once (the source is "managed" from here on).
+    let left_foreign_runtime = settings.providers.has_foreign_runtime();
     settings.providers.normalize();
+    if left_foreign_runtime && settings.ai_fallback.enabled {
+        settings.setup.local_ai_wizard_completed = false;
+        settings.setup.local_ai_wizard_pending = true;
+    }
 
     // Keep legacy post-processing fields synchronized for compatibility with older code paths.
     settings.postproc_llm_enabled = settings.ai_fallback.enabled;
@@ -1962,6 +1970,38 @@ mod tests {
         ] {
             assert!(!rewritten.contains(removed), "{removed} must not persist");
         }
+    }
+
+    #[test]
+    fn leaving_a_system_runtime_reopens_the_setup_once_for_ai_users() {
+        let raw = |enabled: bool| {
+            format!(
+                r#"{{
+                "ai_fallback": {{ "enabled": {enabled}, "model": "gemma4:e4b" }},
+                "providers": {{ "ollama": {{ "runtime_source": "system", "runtime_path": "C:/Program Files/Ollama/ollama.exe" }} }},
+                "setup": {{ "local_ai_wizard_completed": true, "local_ai_wizard_pending": false }}
+            }}"#
+            )
+        };
+
+        let mut used_ai: Settings = serde_json::from_str(&raw(true)).expect("deserialize");
+        normalize_ai_fallback_fields(&mut used_ai);
+        assert!(!used_ai.setup.local_ai_wizard_completed);
+        assert!(used_ai.setup.local_ai_wizard_pending);
+        assert_eq!(used_ai.providers.ollama.runtime_source, "per_user_zip");
+
+        // Second load: already managed, a wizard the user finished stays finished.
+        used_ai.setup.local_ai_wizard_completed = true;
+        used_ai.setup.local_ai_wizard_pending = false;
+        normalize_ai_fallback_fields(&mut used_ai);
+        assert!(used_ai.setup.local_ai_wizard_completed);
+        assert!(!used_ai.setup.local_ai_wizard_pending);
+
+        // Refinement off: nothing to set up, no wizard popup.
+        let mut no_ai: Settings = serde_json::from_str(&raw(false)).expect("deserialize");
+        normalize_ai_fallback_fields(&mut no_ai);
+        assert!(no_ai.setup.local_ai_wizard_completed);
+        assert!(!no_ai.setup.local_ai_wizard_pending);
     }
 
     #[test]

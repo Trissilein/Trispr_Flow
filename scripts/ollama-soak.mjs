@@ -387,8 +387,12 @@ function loadPrompt() {
   if (!m) throw new Error("OLLAMA_PROMPT_DE not found in provider.rs");
   return m[1].replace(/\\(["\\])/g, "$1").replace(/\\n/g, "\n");
 }
+// The German test sentences come from a local-only fixture (bench/fixtures/tts-de-kitten is not in git).
+const SENTENCES_MANIFEST = path.join(repoRoot, "bench", "fixtures", "tts-de-kitten", "manifest.json");
+const CHAT_PHASES = ["1", "2", "3", "4", "5", "6"]; // phases 7, L and S send no request
 function loadSentences() {
-  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "bench", "fixtures", "tts-de-kitten", "manifest.json"), "utf8"));
+  if (!fs.existsSync(SENTENCES_MANIFEST)) return []; // main() skips the phases that need them
+  const manifest = JSON.parse(fs.readFileSync(SENTENCES_MANIFEST, "utf8"));
   // lower case, no punctuation (a decimal comma between digits stays: "4,5")
   return manifest.map((e) => e.text.toLowerCase().replace(/(?<!\d),|,(?!\d)|[.!?;:]/g, "").replace(/\s+/g, " ").trim());
 }
@@ -1409,6 +1413,17 @@ function buildSummary() {
 // ───────────────────────────── main ─────────────────────────────
 async function main() {
   if (process.platform !== "win32") throw new Error("Windows only");
+  if (SENTENCES.length === 0) {
+    const skipped = CFG.phases.filter((p) => CHAT_PHASES.includes(p));
+    if (skipped.length > 0) {
+      console.warn(`[ollama-soak] SKIPPED phases ${skipped.join(",")}: fixture ${path.relative(repoRoot, SENTENCES_MANIFEST)} not found (local-only, not in git).`);
+      CFG.phases = CFG.phases.filter((p) => !CHAT_PHASES.includes(p));
+    }
+    if (CFG.phases.length === 0) {
+      console.warn("[ollama-soak] nothing left to run; no server started, no results written.");
+      return;
+    }
+  }
   for (const v of [CFG.vNew, CFG.vOld]) if (!fs.existsSync(binPath(v))) throw new Error(`missing ${binPath(v)}`);
   if (!isDir(CFG.modelsDir)) throw new Error(`models dir not found: ${CFG.modelsDir}`);
   const protectedRows = loadProtected();

@@ -258,7 +258,7 @@ function applyStartupStatus(status: StartupStatus | null): void {
 }
 
 function syncOllamaStartupToasts(status: StartupStatus | null): void {
-  const localAiEnabled = isRefinementEnabled() && settings?.ai_fallback?.provider === "ollama";
+  const localAiEnabled = isRefinementEnabled();
   const starting = Boolean(status?.ollama_starting);
   const ready = Boolean(status?.ollama_ready);
 
@@ -668,7 +668,7 @@ async function bootstrap() {
       // init anyway in case the event never arrives (Ollama disabled, etc.).
       // This replaces the old "ping immediately at startup" pattern that
       // caused timeout-storms and IPC freezes.
-      if (isRefinementEnabled() && settings?.ai_fallback?.provider === "ollama") {
+      if (isRefinementEnabled()) {
         const OLLAMA_FALLBACK_MS = 30_000;
         let ollamaInitDone = false;
 
@@ -752,12 +752,8 @@ async function bootstrap() {
   const _newListeners = await Promise.all([
     listen<Settings>("settings-changed", (event) => {
       setSettings(event.payload ?? null);
-      const settingsSnapshot = settings;
       reconcileMainTabVisibility();
-      if (
-        !isRefinementEnabled()
-        || settingsSnapshot?.ai_fallback?.provider !== "ollama"
-      ) {
+      if (!isRefinementEnabled()) {
         resetTrackedRefinementJobs();
       }
       scheduleSettingsRender();
@@ -765,7 +761,7 @@ async function bootstrap() {
       renderModels();
       refreshModulesHub();
       void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
-      if (isRefinementEnabled() && settings?.ai_fallback?.provider === "ollama") {
+      if (isRefinementEnabled()) {
         if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
           void refreshOllamaInstalledModels();
         }
@@ -1226,7 +1222,6 @@ async function checkDependencyPreflightOnStartup() {
         if (
           item.id === "ollama_runtime" &&
           isRefinementEnabled() &&
-          settings?.ai_fallback?.provider === "ollama" &&
           (runtimeCard.busy || runtimeCard.backgroundStarting)
         ) {
           return false;
@@ -1237,11 +1232,7 @@ async function checkDependencyPreflightOnStartup() {
         return;
       }
 
-      if (
-        warning.id === "ollama_runtime" &&
-        isRefinementEnabled() &&
-        settings?.ai_fallback?.provider === "ollama"
-      ) {
+      if (warning.id === "ollama_runtime" && isRefinementEnabled()) {
         const runtimeLoading =
           runtimeCard.busy
           || runtimeCard.backgroundStarting
@@ -1335,9 +1326,6 @@ function startRefinementModelKeepalive() {
 
   setInterval(async () => {
     if (!settings?.ai_fallback?.enabled) return;
-    if (settings?.ai_fallback?.provider !== "ollama") {
-      return;
-    }
 
     try {
       await invoke<boolean>("ping_refinement_model");

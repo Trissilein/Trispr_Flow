@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed / Changed — leftovers after the lean-down (2026-11-04)
+
+- **Vocab cleanup throttle** now holds: the backend knows `last_vocab_cleanup_ms` and saves it in `settings.json`, so the LLM cleanup runs at most every 4 days instead of at every app start. Old settings files load as "never cleaned up".
+- **Dead settings and checks removed**: `setup.ollama_remote_expert_opt_in` (old `settings.json` files with it still load), the `"tray"` value in the `main_window_start_state` type, the always-true `provider == "ollama"` checks in the refinement path (`audio.rs`, `main.ts`).
+- **Runtime toast** "No runtime detected" now says "Install the managed local runtime." (was: "select system Ollama", an option that no longer exists).
+- **Docs and scripts**: dropped references to the missing `test:docs`, benchmark and `qa:assistant` scripts (`CONTRIBUTING.md`, `docs/README.md`, `docs/RELEASE_QA_CHECKLIST.md`, `docs/TASK_SCHEDULE.md`); `scripts/ollama-soak.mjs` skips the request phases with a message when the local German fixture (`bench/fixtures/tts-de-kitten`) is missing instead of crashing.
+
 ## [0.9.0] - 2026-11-03
 
 ### Fixed / Changed — after the lean-down (2026-11-03)

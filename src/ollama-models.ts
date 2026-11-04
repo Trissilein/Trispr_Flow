@@ -1737,7 +1737,6 @@ async function maybePersistWizardState(): Promise<void> {
   settings.setup ??= {
     local_ai_wizard_completed: false,
     local_ai_wizard_pending: true,
-    ollama_remote_expert_opt_in: false,
   };
 
   const shouldComplete = runtimeIsHealthy() && installedOllamaModels.length > 0;
@@ -1793,7 +1792,7 @@ async function handleDetectRuntime(): Promise<void> {
       title: runtimeDetect?.found ? "Runtime detected" : "No runtime detected",
       message: runtimeDetect?.found
         ? `${runtimeDetect.source} (${runtimeDetect.version || "unknown version"})`
-        : "Install local runtime or select system Ollama.",
+        : "Install the managed local runtime.",
       duration: 3500,
     });
   });

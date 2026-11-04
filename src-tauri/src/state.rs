@@ -42,7 +42,6 @@ pub(crate) fn sync_diagnostic_logging_enabled(settings: &Settings) {
 pub(crate) struct SetupSettings {
     pub(crate) local_ai_wizard_completed: bool,
     pub(crate) local_ai_wizard_pending: bool,
-    pub(crate) ollama_remote_expert_opt_in: bool,
 }
 
 impl Default for SetupSettings {
@@ -50,7 +49,6 @@ impl Default for SetupSettings {
         Self {
             local_ai_wizard_completed: false,
             local_ai_wizard_pending: true,
-            ollama_remote_expert_opt_in: false,
         }
     }
 }
@@ -358,6 +356,10 @@ pub(crate) struct Settings {
     /// Set to true after the one-time migration that clears legacy heuristic data.
     #[serde(default)]
     pub(crate) edit_delta_migrated: bool,
+    /// Unix-ms timestamp of the last successful LLM vocab cleanup run (0 = never); drives the
+    /// frontend's 4-day throttle, so it must round-trip through `settings.json`.
+    #[serde(default)]
+    pub(crate) last_vocab_cleanup_ms: u64,
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
@@ -489,6 +491,7 @@ impl Default for Settings {
       vocab_terms: Vec::new(),
       edit_substitutions: Vec::new(),
       edit_delta_migrated: false,
+      last_vocab_cleanup_ms: 0,
       postproc_llm_enabled: false,
       postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
@@ -1773,6 +1776,36 @@ mod tests {
             normalize_main_window_start_state(&mut settings);
             assert_eq!(settings.main_window_start_state, expected);
         }
+    }
+
+    #[test]
+    fn last_vocab_cleanup_ms_round_trips_so_the_four_day_throttle_holds() {
+        assert_eq!(Settings::default().last_vocab_cleanup_ms, 0);
+
+        // Old settings.json without the field: serde default 0 (= never cleaned up).
+        let legacy: Settings = serde_json::from_str("{}").expect("legacy settings");
+        assert_eq!(legacy.last_vocab_cleanup_ms, 0);
+
+        // The frontend writes it via save_settings; it must survive a serialize/deserialize cycle.
+        let mut settings = Settings::default();
+        settings.last_vocab_cleanup_ms = 1_762_000_000_000;
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(json.contains("\"last_vocab_cleanup_ms\":1762000000000"));
+        let reloaded: Settings = serde_json::from_str(&json).expect("reload settings");
+        assert_eq!(reloaded.last_vocab_cleanup_ms, 1_762_000_000_000);
+    }
+
+    #[test]
+    fn removed_remote_expert_opt_in_in_old_setup_block_still_loads() {
+        let settings: Settings = serde_json::from_str(
+            r#"{ "setup": { "local_ai_wizard_completed": true, "local_ai_wizard_pending": false,
+                            "ollama_remote_expert_opt_in": true } }"#,
+        )
+        .expect("old setup block must still deserialize");
+        assert!(settings.setup.local_ai_wizard_completed);
+        assert!(!settings.setup.local_ai_wizard_pending);
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(!rewritten.contains("ollama_remote_expert_opt_in"));
     }
 
     #[test]

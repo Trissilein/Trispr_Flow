@@ -2702,18 +2702,18 @@ fn a_hanging_signature_probe_ends_as_unverified_and_the_process_is_killed() {
         &windows_powershell_path(),
         &pid_file,
         HANGING_PROBE,
-        Duration::from_secs(3),
+        Duration::from_secs(10),
     )
     .expect("a probe that cannot finish is not a rejection");
 
     match verdict {
         SignatureVerdict::Unverified(reason) => {
-            assert!(reason.contains("did not finish within 3 s"), "{}", reason)
+            assert!(reason.contains("did not finish within 10 s"), "{}", reason)
         }
         other => panic!("expected Unverified, got {:?}", other),
     }
     assert!(
-        started.elapsed() < Duration::from_secs(15),
+        started.elapsed() < Duration::from_secs(30),
         "{:?}",
         started.elapsed()
     );

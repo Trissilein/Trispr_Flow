@@ -99,7 +99,7 @@ npm run test:smoke
 
 The `cargo build` step was removed on 2026-05-23. The `--no-run` workaround was removed
 on 2026-05-24 after the Windows loader crash was fixed in `src-tauri/build.rs`.
-See `project-spec/decisions/2026-05-23/ci-smoke-job-redesign.md` and `docs/KNOWN_ISSUES.md`.
+See `docs/KNOWN_ISSUES.md`.
 
 ## Local whisper.cpp (GPU)
 1. Build whisper.cpp with CUDA enabled.

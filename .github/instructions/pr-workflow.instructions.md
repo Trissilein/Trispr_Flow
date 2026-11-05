@@ -13,7 +13,7 @@ Open PRs as **drafts** while work is in progress. Mark "Ready for review" only w
 Always fill every section of the template in `.github/pull_request_template.md`.
 
 - **What & Why** — one paragraph, intent + motivation, link to issue/ROADMAP if applicable
-- **Decision record** — link to `project-spec/decisions/YYYY-MM-DD/slug.md`, or `n/a`
+- **Decision record** — link to an ADR or the issue, or `n/a`
 - **Test evidence** — paste last lines of `npm test` output or link to CI run; if no tests exist, say why
 - **Files of note** — only files where intent is non-obvious to a reviewer
 

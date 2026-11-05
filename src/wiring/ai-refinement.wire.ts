@@ -3,8 +3,7 @@
 // Covers: AI Refinement + Post-Processing + topic-keywords +
 // prompt-editor + local-runtime per CONTEXT.md. Language controls
 // (languageSelect, languagePinnedToggle, whisperInputLanguageSelect) are folded
-// in because they mutate AI-Refinement prompt state. See OQ-3 clause 8
-// (project-spec/decisions/2026-05-15/refactoring-plan.md).
+// in because they mutate AI-Refinement prompt state.
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Settings } from "../types";

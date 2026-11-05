@@ -7,7 +7,6 @@
 ## Decision record
 
 <!-- If this PR encodes a hard-to-reverse or surprising decision, link or embed the ADR.
-     Format: project-spec/decisions/YYYY-MM-DD/slug.md
      If no ADR applies, write "n/a". -->
 
 

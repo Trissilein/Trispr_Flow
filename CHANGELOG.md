@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-05
+
 ### Added
 
 - **In-app speech engine download**: the whisper.cpp v1.9.5 runtime (CUDA ~486 MB or Vulkan ~15 MB) can be downloaded by the setup wizard into `%LOCALAPPDATA%\Trispr Flow\runtime\{cuda,vulkan}` (`TRISPR_WHISPER_RUNTIME_DIR` redirects it for tests). The pin (URL, ZIP SHA-256, size and SHA-256 of every file) is compiled in from `runtime-manifests/whisper-runtime-1.9.5.json`; downloads are limited to the project release URL, unpacked only as the listed files (no zip-slip, size and hash checked per file) into a staging folder and swapped in atomically, so a cancelled or failed download leaves nothing behind and keeps an earlier install. New commands: `get_whisper_runtime_status`, `download_whisper_runtime`, `detect_recommended_runtime` (NVIDIA Turing or newer -> CUDA, anything else -> Vulkan), `verify_whisper_runtime` (starts `whisper-cli`, and for CUDA asks `cudart` for a device: old driver or no GPU -> the wizard loads Vulkan and keeps the backend on Vulkan). Bundled `bin/{cuda,vulkan}` still win over a downloaded runtime of the same backend.

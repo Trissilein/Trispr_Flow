@@ -16,7 +16,7 @@ The scope should name the domain area, not the file (`refactoring`, `overlay`, `
 
 Checkpoint handoffs must be self-contained enough for agents that cannot read user-level or Hub skills.
 
-When creating or using a checkpoint under `project-spec/checkpoints/`:
+When creating or using a checkpoint (stored wherever the task says):
 
 - Include a `## Kickoff Prompt` section when another agent is expected to continue the work.
 - The kickoff prompt must link the checkpoint, state the task, name acceptance criteria or verification, and state commit authority.

@@ -117,5 +117,5 @@ This rule is mandatory for assistant prose in this repo.
 - PRs from contributors are opened as **drafts** while in progress.
 - Review is requested only when the PR is marked **Ready for review** and CI (`Type-check + unit tests`) is green.
 - Do not review or approve a PR that is still in draft state.
-- PR context is in the description, commit messages, and `project-spec/decisions/`. No mempalace access is required to review a PR.
+- PR context is in the description, commit messages and linked issues. No mempalace access is required to review a PR.
 <!-- END PROJECT LOCAL BLOCK -->

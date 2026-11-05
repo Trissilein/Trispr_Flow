@@ -2,7 +2,7 @@
 
 > Offline-first dictation and system-audio transcription with local Ollama refinement.
 
-[![Version](https://img.shields.io/badge/version-0.9.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.10.0-blue.svg)](CHANGELOG.md)
 [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)](https://github.com/Trissilein/Trispr_Flow/releases)
 [![macOS](https://img.shields.io/badge/macOS-planned-lightgrey?style=flat&logo=apple)](ROADMAP.md)
 [![Notices](https://img.shields.io/badge/license-notices-blue.svg)](THIRD_PARTY_NOTICES.md)
@@ -21,7 +21,7 @@ It is designed for local-first transcription and editing workflows:
 
 ## Current Release
 
-- Current app line: `v0.9.1`
+- Current app line: `v0.10.0`
 - Packaging: Windows installer in two variants (`mini`, `full`), unsigned
 - Current focus: **lean core** (dictation, Ollama refinement, history, vocabulary). The 2026-11-02 lean-down removed cloud providers, LM Studio/Oobabooga, TTS/Piper, video generation, the assistant, GDD/Confluence, task capture and benchmarks (see [CHANGELOG.md](CHANGELOG.md))
 
@@ -98,7 +98,8 @@ Installer build/upload shortcuts:
 | `v0.8.3` | Released    | CUDA 13 migration, runtime seed asset (GDD package, since removed) |
 | `v0.8.4` | Not tagged  | GPU-load gate, Vulkan installer validation                 |
 | `v0.9.0` | Released    | Lean-down, OLED theme, per-process VRAM panel              |
-| `v0.9.1` | Current     | Dead-code sweep, managed-only installer, vocab-cleanup throttle |
+| `v0.9.1` | Released    | Dead-code sweep, managed-only installer, vocab-cleanup throttle |
+| `v0.10.0` | Current    | Lean-down 2, mini + full installers, in-app speech-engine download |
 
 Canonical planning docs:
 - [ROADMAP.md](ROADMAP.md)

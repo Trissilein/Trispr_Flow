@@ -50,9 +50,7 @@ const filteredResources = {};
 for (const [key, value] of Object.entries(resources)) {
   if (
     normalizedVariant === "ci" &&
-    (key.startsWith("bin/cuda/") ||
-      key.startsWith("bin/vulkan/") ||
-      key.startsWith("bin/ffmpeg/"))
+    (key.startsWith("bin/cuda/") || key.startsWith("bin/vulkan/"))
   ) {
     continue;
   }
@@ -60,10 +58,6 @@ for (const [key, value] of Object.entries(resources)) {
     continue;
   }
   if (normalizedVariant === "cuda-lite" && key === "bin/cuda/cublasLt64_13.dll") {
-    continue;
-  }
-  // FFmpeg is downloaded on-demand for non-offline variants
-  if (normalizedVariant !== "cuda-complete" && key.startsWith("bin/ffmpeg/")) {
     continue;
   }
   filteredResources[key] = value;

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Modules tab and module system**: `src-tauri/src/modules/`, the Modules tab and config modal, `module-sidecars/` and the module commands/events are gone. AI Refinement is now a plain setting (`ai_fallback.enabled`); the AI Refinement tab is always shown. Old `settings.json` files with `module_settings` still load (the block is ignored and not written back).
+- **Settings-visibility editor**: `settings-visibility*.ts`, the per-setting Basic/Expert profile (localStorage) and all `data-settings-visibility-*` markup. The Expert toggle stays; the advanced controls the editor hid by default are now marked `data-expert-only`.
+- **Repo cleanup**: `project-spec/`, `scripts/legacy/`, the Ollama soak script, root `.bat` wrappers, `GEMINI.md`, old v0.6/v0.7 plan docs, `docs/MODULE-PUBLISHING.md`; Piper/FFmpeg/Opus sections of `docs/INSTALLER_VARIANTS.md`.
+- **Dependencies**: `image` and `rfd` crates dropped (tray icon decode uses Tauri `image-png`, file dialogs use `tauri-plugin-dialog`), Tauri `x11` feature, unused `windows` feature, `rollup` devDependency.
+
+- **System-audio transcription and recording export**: loopback capture, system history/conversation view, Opus/recording export, session manager and crash-recovery dump, archive browser, FFmpeg bundling/installer page, `opus` module. Old `settings.json` files with the removed fields still load. Mic auto-dump settings stay (moved into the mic "Capture Advanced" block). Plain-text history export stays.
+
 ## [0.9.1] - 2026-11-04
 
 ### Fixed / Changed — leftovers after the lean-down (2026-11-04)

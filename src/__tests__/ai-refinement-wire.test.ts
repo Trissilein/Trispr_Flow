@@ -65,7 +65,6 @@ vi.hoisted(() => {
     <button id="topic-keywords-add"></button>
 
     <!-- Modules -->
-    <input id="modules-ai-refinement-toggle" type="checkbox" />
   `;
 });
 
@@ -117,16 +116,8 @@ const mockedAutoStartLocalRuntimeIfNeeded = vi.mocked(
 function freshSettings(): Settings {
   return {
     capture_enabled: false,
-    transcribe_enabled: false,
     mode: "ptt",
     input_device: "default",
-    transcribe_output_device: "default",
-    transcribe_vad_mode: false,
-    transcribe_vad_threshold: 0.5,
-    transcribe_vad_silence_ms: 1200,
-    transcribe_batch_interval_ms: 10000,
-    transcribe_chunk_overlap_ms: 300,
-    transcribe_input_gain_db: 0,
     audio_cues: false,
     audio_cues_volume: 0.5,
     ptt_use_vad: false,
@@ -134,10 +125,6 @@ function freshSettings(): Settings {
     hallucination_filter_enabled: false,
     activation_words_enabled: false,
     activation_words: [],
-    opus_enabled: false,
-    opus_bitrate_kbps: 24,
-    auto_save_system_audio: false,
-    auto_save_mic_audio: false,
     continuous_dump_enabled: false,
     continuous_dump_profile: "balanced",
     continuous_soft_flush_ms: 10000,
@@ -147,10 +134,6 @@ function freshSettings(): Settings {
     continuous_pre_roll_ms: 300,
     continuous_post_roll_ms: 200,
     continuous_idle_keepalive_ms: 60000,
-    continuous_system_override_enabled: false,
-    continuous_system_soft_flush_ms: 10000,
-    continuous_system_silence_flush_ms: 1200,
-    continuous_system_hard_cut_ms: 45000,
     continuous_mic_override_enabled: false,
     continuous_mic_soft_flush_ms: 10000,
     continuous_mic_silence_flush_ms: 1200,
@@ -167,9 +150,6 @@ function freshSettings(): Settings {
     postproc_llm_model: "",
     postproc_llm_prompt: "",
     topic_keywords: [],
-    module_settings: {
-      enabled_modules: ["ai_refinement"],
-    },
     providers: {
       ollama: {
         endpoint: "http://127.0.0.1:11434",
@@ -382,32 +362,10 @@ describe("language controls", () => {
   });
 });
 
-// ── AI fallback module gate ──────────────────────────────────────────────────
+// ── AI fallback enable toggle ────────────────────────────────────────────────
 
-describe("AI fallback module gate", () => {
-  it("aiFallbackEnabled: module disabled → checkbox is unchecked and no enable", async () => {
-    wireOnce();
-    setSettings({
-      ...freshSettings(),
-      module_settings: {
-        enabled_modules: [],
-        consented_permissions: {},
-        module_overrides: {},
-      }, // ai_refinement NOT in list
-    });
-    dom.aiFallbackEnabled!.checked = true;
-    dom.aiFallbackEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
-    );
-    expect(settings?.ai_fallback.enabled).toBe(false);
-    expect(dom.aiFallbackEnabled!.checked).toBe(false);
-  });
-
-  it("aiFallbackEnabled: module enabled + ollama detected → enables AI", async () => {
+describe("AI fallback enable toggle", () => {
+  it("aiFallbackEnabled: ollama detected → enables AI", async () => {
     wireOnce();
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "detect_ollama_runtime") return { found: true };

@@ -838,12 +838,8 @@ fn apply_overlay_ollama_state_to_window(app: &AppHandle, window: &WebviewWindow)
         .unwrap_or_else(|p| p.into_inner())
         .clone();
 
-    let is_ollama_active = settings.ai_fallback.provider == "ollama"
-        && settings.ai_fallback.enabled
-        && settings
-            .module_settings
-            .enabled_modules
-            .contains(crate::state::AI_REFINEMENT_MODULE_ID);
+    let is_ollama_active =
+        settings.ai_fallback.provider == "ollama" && settings.ai_fallback.enabled;
 
     if !is_ollama_active {
         return;

@@ -124,12 +124,8 @@ function setAiNodeCopy(summary: string): void {
   }
 }
 
-function isAiRefinementModuleEnabled(): boolean {
-  return settings?.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
-}
-
 function isLocalAiPathEnabled(): boolean {
-  if (!isAiRefinementModuleEnabled() || !settings?.ai_fallback?.enabled) return false;
+  if (!settings?.ai_fallback?.enabled) return false;
   return settings.ai_fallback.provider === "ollama";
 }
 
@@ -204,7 +200,7 @@ function updateLiveSummary(
 export function renderRefinementPipelineGraph(): void {
   if (!dom.refinementPipelineGraph) return;
 
-  const aiEnabled = isAiRefinementModuleEnabled() && Boolean(settings?.ai_fallback?.enabled);
+  const aiEnabled = Boolean(settings?.ai_fallback?.enabled);
   const rulesEnabled = Boolean(settings?.postproc_enabled);
   const rulesReady = startupStatus?.rules_ready ?? true;
   const ollamaReady = Boolean(startupStatus?.ollama_ready);

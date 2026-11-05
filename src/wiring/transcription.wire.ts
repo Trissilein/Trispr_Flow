@@ -4,11 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Settings } from "../types";
 import * as dom from "../dom-refs";
 import { settings } from "../state";
-import {
-  updateTranscribeVadVisibility,
-  updateTranscribeThreshold,
-  syncCaptureModeVisibility,
-} from "../settings/transcription.settings";
+import { syncCaptureModeVisibility } from "../settings/transcription.settings";
 import {
   renderSettings,
 } from "../settings";
@@ -56,40 +52,11 @@ function applyContinuousProfile(profile: "balanced" | "low_latency" | "high_qual
     settings.continuous_idle_keepalive_ms = 60000;
   }
 
-  if (!settings.continuous_system_override_enabled) {
-    settings.continuous_system_soft_flush_ms = settings.continuous_soft_flush_ms;
-    settings.continuous_system_silence_flush_ms = settings.continuous_silence_flush_ms;
-    settings.continuous_system_hard_cut_ms = settings.continuous_hard_cut_ms;
-  }
   if (!settings.continuous_mic_override_enabled) {
     settings.continuous_mic_soft_flush_ms = settings.continuous_soft_flush_ms;
     settings.continuous_mic_silence_flush_ms = settings.continuous_silence_flush_ms;
     settings.continuous_mic_hard_cut_ms = settings.continuous_hard_cut_ms;
   }
-  const systemSoftFlush = settings.continuous_system_soft_flush_ms ?? settings.continuous_soft_flush_ms ?? 10000;
-  const systemSilenceFlush =
-    settings.continuous_system_silence_flush_ms ?? settings.continuous_silence_flush_ms ?? 1200;
-  const preRollMs = settings.continuous_pre_roll_ms ?? 300;
-  settings.transcribe_batch_interval_ms = Math.max(
-    4000,
-    Math.min(15000, systemSoftFlush),
-  );
-  settings.transcribe_vad_silence_ms = Math.max(
-    200,
-    Math.min(5000, systemSilenceFlush),
-  );
-  settings.transcribe_chunk_overlap_ms = Math.max(
-    0,
-    Math.min(3000, preRollMs),
-  );
-}
-
-async function syncOpusToggles(source: HTMLInputElement): Promise<void> {
-  if (!settings) return;
-  settings.opus_enabled = source.checked;
-  if (dom.opusEnabledToggle && dom.opusEnabledToggle !== source) dom.opusEnabledToggle.checked = source.checked;
-  if (dom.opusArchiveToggle && dom.opusArchiveToggle !== source) dom.opusArchiveToggle.checked = source.checked;
-  await persistSettings();
 }
 
 let backendSwitchBusy = false;
@@ -127,13 +94,6 @@ export function wireTranscription(): void {
     renderHero();
   });
 
-  dom.transcribeEnabledToggle?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.transcribe_enabled = dom.transcribeEnabledToggle!.checked;
-    await persistSettings();
-    renderHero();
-  });
-
   dom.modeSelect?.addEventListener("change", async () => {
     if (!settings) return;
     settings.mode = dom.modeSelect!.value as Settings["mode"];
@@ -145,7 +105,6 @@ export function wireTranscription(): void {
 
   setupHotkeyRecorder("ptt", dom.pttHotkey, dom.pttHotkeyRecord, dom.pttHotkeyStatus);
   setupHotkeyRecorder("toggle", dom.toggleHotkey, dom.toggleHotkeyRecord, dom.toggleHotkeyStatus);
-  setupHotkeyRecorder("transcribe", dom.transcribeHotkey, dom.transcribeHotkeyRecord, dom.transcribeHotkeyStatus);
   setupHotkeyRecorder("toggleActivationWords", dom.toggleActivationWordsHotkey, dom.toggleActivationWordsHotkeyRecord, dom.toggleActivationWordsHotkeyStatus);
 
   dom.deviceSelect?.addEventListener("change", async () => {
@@ -154,116 +113,6 @@ export function wireTranscription(): void {
     await persistSettings();
     renderHero();
   });
-
-  dom.transcribeDeviceSelect?.addEventListener("change", async () => {
-    if (!settings || !dom.transcribeDeviceSelect) return;
-    settings.transcribe_output_device = dom.transcribeDeviceSelect.value;
-    await persistSettings();
-  });
-
-  dom.transcribeVadToggle?.addEventListener("change", async () => {
-    if (!settings || !dom.transcribeVadToggle) return;
-    settings.transcribe_vad_mode = dom.transcribeVadToggle.checked;
-    if (dom.transcribeBatchField) {
-      const disabled = settings.transcribe_vad_mode;
-      dom.transcribeBatchField.classList.toggle("is-disabled", disabled);
-      dom.transcribeBatchInterval?.toggleAttribute("disabled", disabled);
-    }
-    if (dom.transcribeOverlapField) {
-      const disabled = settings.transcribe_vad_mode;
-      dom.transcribeOverlapField.classList.toggle("is-disabled", disabled);
-      dom.transcribeChunkOverlap?.toggleAttribute("disabled", disabled);
-    }
-    if (dom.transcribeVadThresholdField) {
-      const disabled = !settings.transcribe_vad_mode;
-      dom.transcribeVadThresholdField.classList.toggle("is-disabled", disabled);
-      dom.transcribeVadThreshold?.toggleAttribute("disabled", disabled);
-    }
-    if (dom.transcribeVadSilenceField) {
-      const disabled = !settings.transcribe_vad_mode;
-      dom.transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
-      dom.transcribeVadSilence?.toggleAttribute("disabled", disabled);
-    }
-    updateTranscribeVadVisibility(settings.transcribe_vad_mode);
-    await persistSettings();
-  });
-
-  dom.transcribeVadThreshold?.addEventListener("input", () => {
-    if (!settings || !dom.transcribeVadThreshold) return;
-    const rawDb = Number(dom.transcribeVadThreshold.value);
-    const clampedDb = Math.max(VAD_DB_FLOOR, Math.min(0, rawDb));
-    settings.transcribe_vad_threshold = Math.min(1, Math.max(0, dbToLevel(clampedDb)));
-    if (dom.transcribeVadThresholdValue) {
-      dom.transcribeVadThresholdValue.textContent = `${Math.round(clampedDb)} dB`;
-    }
-    updateRangeAria("transcribe-vad-threshold", clampedDb);
-    updateTranscribeThreshold(settings.transcribe_vad_threshold);
-  });
-
-  onChangePersist(dom.transcribeVadThreshold);
-
-  dom.transcribeVadSilence?.addEventListener("input", () => {
-    if (!settings || !dom.transcribeVadSilence) return;
-    const value = Number(dom.transcribeVadSilence.value);
-    settings.transcribe_vad_silence_ms = Math.max(200, Math.min(5000, value));
-    settings.continuous_system_silence_flush_ms = settings.transcribe_vad_silence_ms;
-    if (!settings.continuous_system_override_enabled) {
-      settings.continuous_silence_flush_ms = settings.transcribe_vad_silence_ms;
-    }
-    if (dom.transcribeVadSilenceValue) {
-      dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
-    }
-    updateRangeAria("transcribe-vad-silence", value);
-  });
-
-  onChangePersist(dom.transcribeVadSilence);
-
-  dom.transcribeBatchInterval?.addEventListener("input", () => {
-    if (!settings || !dom.transcribeBatchInterval) return;
-    const value = Number(dom.transcribeBatchInterval.value);
-    settings.transcribe_batch_interval_ms = Math.max(4000, Math.min(15000, value));
-    settings.continuous_system_soft_flush_ms = settings.transcribe_batch_interval_ms;
-    if (!settings.continuous_system_override_enabled) {
-      settings.continuous_soft_flush_ms = settings.transcribe_batch_interval_ms;
-    }
-    if (dom.transcribeBatchValue) {
-      dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
-    }
-    updateRangeAria("transcribe-batch-interval", value);
-  });
-
-  onChangePersist(dom.transcribeBatchInterval);
-
-  dom.transcribeChunkOverlap?.addEventListener("input", () => {
-    if (!settings || !dom.transcribeChunkOverlap) return;
-    const value = Number(dom.transcribeChunkOverlap.value);
-    settings.transcribe_chunk_overlap_ms = Math.max(0, Math.min(3000, value));
-    settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
-    if (settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms) {
-      settings.transcribe_chunk_overlap_ms = Math.floor(settings.transcribe_batch_interval_ms / 2);
-      dom.transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
-      settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
-    }
-    if (dom.transcribeOverlapValue) {
-      dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
-    }
-    updateRangeAria("transcribe-chunk-overlap", settings.transcribe_chunk_overlap_ms);
-  });
-
-  onChangePersist(dom.transcribeChunkOverlap);
-
-  dom.transcribeGain?.addEventListener("input", () => {
-    if (!settings || !dom.transcribeGain) return;
-    const value = Number(dom.transcribeGain.value);
-    settings.transcribe_input_gain_db = Math.max(-30, Math.min(30, value));
-    if (dom.transcribeGainValue) {
-      const gain = Math.round(settings.transcribe_input_gain_db);
-      dom.transcribeGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
-    }
-    updateRangeAria("transcribe-gain", value);
-  });
-
-  onChangePersist(dom.transcribeGain);
 
   dom.micGain?.addEventListener("input", () => {
     if (!settings || !dom.micGain) return;
@@ -379,27 +228,6 @@ export function wireTranscription(): void {
     await persistSettings();
   });
 
-  dom.opusEnabledToggle?.addEventListener("change", () => void syncOpusToggles(dom.opusEnabledToggle!));
-  dom.opusArchiveToggle?.addEventListener("change", () => void syncOpusToggles(dom.opusArchiveToggle!));
-
-  dom.opusBitrateSelect?.addEventListener("change", async () => {
-    if (!settings || !dom.opusBitrateSelect) return;
-    settings.opus_bitrate_kbps = parseInt(dom.opusBitrateSelect.value, 10);
-    await persistSettings();
-  });
-
-  dom.autoSaveSystemAudioToggle?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.auto_save_system_audio = dom.autoSaveSystemAudioToggle!.checked;
-    await persistSettings();
-  });
-
-  dom.autoSaveMicAudioToggle?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.auto_save_mic_audio = dom.autoSaveMicAudioToggle!.checked;
-    await persistSettings();
-  });
-
   dom.continuousDumpEnabledToggle?.addEventListener("change", async () => {
     if (!settings) return;
     settings.continuous_dump_enabled = dom.continuousDumpEnabledToggle!.checked;
@@ -418,7 +246,6 @@ export function wireTranscription(): void {
     if (!settings || !dom.continuousHardCut) return;
     const value = Math.max(15000, Math.min(120000, Number(dom.continuousHardCut.value)));
     settings.continuous_hard_cut_ms = value;
-    if (!settings.continuous_system_override_enabled) settings.continuous_system_hard_cut_ms = value;
     if (!settings.continuous_mic_override_enabled) settings.continuous_mic_hard_cut_ms = value;
     if (dom.continuousHardCutValue) dom.continuousHardCutValue.textContent = `${Math.round(value / 1000)}s`;
     updateRangeAria("continuous-hard-cut", value);
@@ -438,10 +265,7 @@ export function wireTranscription(): void {
     if (!settings || !dom.continuousPreRoll) return;
     const value = Math.max(0, Math.min(1500, Number(dom.continuousPreRoll.value)));
     settings.continuous_pre_roll_ms = value;
-    settings.transcribe_chunk_overlap_ms = Math.max(0, Math.min(3000, value));
     if (dom.continuousPreRollValue) dom.continuousPreRollValue.textContent = `${(value / 1000).toFixed(2)}s`;
-    if (dom.transcribeChunkOverlap) dom.transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
-    if (dom.transcribeOverlapValue) dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
     updateRangeAria("continuous-pre-roll", value);
   });
   onChangePersist(dom.continuousPreRoll);
@@ -463,51 +287,6 @@ export function wireTranscription(): void {
     updateRangeAria("continuous-keepalive", value);
   });
   onChangePersist(dom.continuousKeepalive);
-
-  dom.continuousSystemOverrideToggle?.addEventListener("change", async () => {
-    if (!settings) return;
-    settings.continuous_system_override_enabled = dom.continuousSystemOverrideToggle!.checked;
-    if (!settings.continuous_system_override_enabled) {
-      settings.continuous_system_soft_flush_ms = settings.continuous_soft_flush_ms!;
-      settings.continuous_system_silence_flush_ms = settings.continuous_silence_flush_ms!;
-      settings.continuous_system_hard_cut_ms = settings.continuous_hard_cut_ms!;
-    }
-    scheduleSettingsRender();
-    await persistSettings();
-  });
-
-  dom.continuousSystemSoftFlush?.addEventListener("input", () => {
-    if (!settings || !dom.continuousSystemSoftFlush) return;
-    const value = Math.max(4000, Math.min(30000, Number(dom.continuousSystemSoftFlush.value)));
-    settings.continuous_system_soft_flush_ms = value;
-    settings.transcribe_batch_interval_ms = Math.max(4000, Math.min(15000, value));
-    if (dom.continuousSystemSoftFlushValue) dom.continuousSystemSoftFlushValue.textContent = `${Math.round(value / 1000)}s`;
-    if (dom.transcribeBatchInterval) dom.transcribeBatchInterval.value = settings.transcribe_batch_interval_ms.toString();
-    if (dom.transcribeBatchValue) dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
-    updateRangeAria("continuous-system-soft-flush", value);
-  });
-  onChangePersist(dom.continuousSystemSoftFlush);
-
-  dom.continuousSystemSilenceFlush?.addEventListener("input", () => {
-    if (!settings || !dom.continuousSystemSilenceFlush) return;
-    const value = Math.max(300, Math.min(5000, Number(dom.continuousSystemSilenceFlush.value)));
-    settings.continuous_system_silence_flush_ms = value;
-    settings.transcribe_vad_silence_ms = Math.max(200, Math.min(5000, value));
-    if (dom.continuousSystemSilenceFlushValue) dom.continuousSystemSilenceFlushValue.textContent = `${(value / 1000).toFixed(1)}s`;
-    if (dom.transcribeVadSilence) dom.transcribeVadSilence.value = settings.transcribe_vad_silence_ms.toString();
-    if (dom.transcribeVadSilenceValue) dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
-    updateRangeAria("continuous-system-silence-flush", value);
-  });
-  onChangePersist(dom.continuousSystemSilenceFlush);
-
-  dom.continuousSystemHardCut?.addEventListener("input", () => {
-    if (!settings || !dom.continuousSystemHardCut) return;
-    const value = Math.max(15000, Math.min(120000, Number(dom.continuousSystemHardCut.value)));
-    settings.continuous_system_hard_cut_ms = value;
-    if (dom.continuousSystemHardCutValue) dom.continuousSystemHardCutValue.textContent = `${Math.round(value / 1000)}s`;
-    updateRangeAria("continuous-system-hard-cut", value);
-  });
-  onChangePersist(dom.continuousSystemHardCut);
 
   dom.continuousMicOverrideToggle?.addEventListener("change", async () => {
     if (!settings) return;

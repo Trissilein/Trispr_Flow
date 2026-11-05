@@ -120,19 +120,6 @@ if /i "%VARIANT%"=="vulkan" (
     )
 )
 
-REM --- FFmpeg only bundled in cuda-complete (offline installer) ---
-if /i "%VARIANT%"=="cuda-complete" (
-    echo   [setup] Ensuring FFmpeg runtime for cuda-complete...
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\setup-ffmpeg.ps1"
-    if not "!ERRORLEVEL!"=="0" (
-        echo ERROR: FFmpeg setup failed for cuda-complete.
-        del /q "%CFG%" >nul 2>&1
-        exit /b 1
-    )
-) else (
-    echo   [skip] FFmpeg bundling skipped for %VARIANT% ^(on-demand download^)
-)
-
 REM --- Inject compile-time variant define for hooks.nsh ---
 REM Use setlocal scope to temporarily disable delayed expansion for echo with !
 setlocal disabledelayedexpansion

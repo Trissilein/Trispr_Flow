@@ -18,9 +18,6 @@ Use the canonical bootstrap script after cloning:
 scripts\windows\FIRST_RUN.bat
 ```
 
-Compatibility wrapper:
-- `FIRST_RUN.bat` (repo root)
-
 What it does:
 - runs `npm install`
 - tries to copy runtime files from an existing installed app:
@@ -71,9 +68,6 @@ Use the canonical batch script to build the NSIS installer:
 ```bat
 scripts\windows\rebuild-installer.bat
 ```
-
-Compatibility wrapper:
-- `rebuild-installer.bat` (repo root)
 
 Notes:
 - The script anchors to the repo root, so it works regardless of the current working directory.

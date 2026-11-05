@@ -9,14 +9,13 @@ import {
   isRefinementEnabled,
 } from "./state";
 import * as dom from "./dom-refs";
-import { updateRecordingStatus, updateRefiningStatus, updateTranscribeStatus } from "./accessibility";
+import { updateRecordingStatus, updateRefiningStatus } from "./accessibility";
 import { thresholdToPercent, formatModelName, formatPresetLabel, formatVram } from "./ui-helpers";
 import { BUILT_IN_REFINEMENT_PROMPT_PRESET_OPTIONS } from "./refinement-prompts";
 import {
   applyFeedbackSettings,
   getFeedbackView,
   transitionCaptureRuntime,
-  transitionTranscribeRuntime,
 } from "./feedback-state";
 
 let refiningRuntimeActive = false;
@@ -78,7 +77,7 @@ function selectedWhisperBackendPreference(): "cuda" | "vulkan" {
 }
 
 function renderFeedbackIndicators() {
-  const { capture, transcribe } = getFeedbackView();
+  const { capture } = getFeedbackView();
   const selectedBackend = selectedWhisperBackendPreference();
 
   if (dom.statusDot) {
@@ -95,18 +94,6 @@ function renderFeedbackIndicators() {
     dom.statusMessage.textContent = "";
   }
   updateRecordingStatus(capture.labelState);
-
-  if (dom.transcribeStatusDot) {
-    dom.transcribeStatusDot.dataset.state = transcribe.activityState;
-  }
-  if (dom.transcribeStatusLabel) {
-    dom.transcribeStatusLabel.textContent = transcribe.labelText;
-  }
-  if (dom.transcribePill) {
-    dom.transcribePill.classList.toggle("status-pill--enabled", transcribe.enabled);
-    dom.transcribePill.classList.toggle("status-pill--disabled", !transcribe.enabled);
-  }
-  updateTranscribeStatus(transcribe.labelState);
 
   const refiningEnabled = isRefinementEnabled();
   const refiningState: "disabled" | "idle" | "refining" = !refiningEnabled
@@ -179,11 +166,6 @@ function renderFeedbackIndicators() {
 
 export function setCaptureStatus(state: RecordingState) {
   transitionCaptureRuntime(state);
-  renderFeedbackIndicators();
-}
-
-export function setTranscribeStatus(state: RecordingState) {
-  transitionTranscribeRuntime(state);
   renderFeedbackIndicators();
 }
 

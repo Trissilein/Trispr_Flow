@@ -13,13 +13,11 @@ import {
 } from "./continuous-dump.settings";
 import { renderOverlaySettings } from "./overlay.settings";
 import { renderPostProcessingSettings } from "./post-processing.settings";
-import { renderRecordingQualitySettings } from "./recording-quality.settings";
 import { renderTranscriptionSettings } from "./transcription.settings";
 import {
   renderAIRefinementTab,
   renderOverlayHealthNote,
 } from "./ai-refinement.settings";
-import { applySettingsVisibility } from "../settings-visibility";
 
 export { persistSettings };
 export { ensureContinuousDumpDefaults };
@@ -41,7 +39,6 @@ export function renderSettings() {
   syncDerivedLanguageSettings();
   renderTranscriptionSettings();
   renderContinuousDumpSettings();
-  renderRecordingQualitySettings();
   renderOverlaySettings();
   // Apply accent color
   settings.accent_color = normalizeColorHex(settings.accent_color, DEFAULT_ACCENT_COLOR);
@@ -50,5 +47,4 @@ export function renderSettings() {
   renderOverlayHealthNote();
   renderPostProcessingSettings();
   renderAIRefinementTab();
-  applySettingsVisibility();
 }

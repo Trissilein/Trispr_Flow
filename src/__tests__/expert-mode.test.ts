@@ -221,16 +221,7 @@ describe("Block K K5 — Expert Mode Toggle", () => {
       expect(byId(id).closest('[data-expert-only="true"]')).toBeNull();
     };
     const expectExpertControl = (id: string): void => {
-      const element = byId(id);
-      const tabContent = element.dataset.settingsVisibilityTab
-        ? root.querySelector<HTMLElement>(`[data-settings-visibility-tab-content="${element.dataset.settingsVisibilityTab}"]`)
-        : null;
-      expect(
-        element.closest('[data-expert-only="true"]')
-        || element.closest('[data-settings-visibility-default="expert"]')
-        || tabContent?.querySelector('[data-settings-visibility-default="expert"]')
-        || element.dataset.settingsVisibilityTab,
-      ).not.toBeNull();
+      expect(byId(id).closest('[data-expert-only="true"]')).not.toBeNull();
     };
 
     expect(indexHtml).toContain("PTT audio standby window");
@@ -240,7 +231,6 @@ describe("Block K K5 — Expert Mode Toggle", () => {
     expect(indexHtml).toContain("Does not keep Whisper or Ollama models loaded");
     expect(indexHtml).toContain("Refinement flow");
     expect(indexHtml).toContain("Whisper creates raw text");
-    expect(indexHtml).toMatch(/data-panel="system"[^>]*data-expert-only="true"/);
     expect(indexHtml).toMatch(/data-panel="interface"[^>]*data-expert-only="true"/);
     expect(indexHtml).toMatch(/id="ptt-hot-keepalive"[\s\S]*aria-label="PTT audio standby window"/);
 
@@ -269,14 +259,12 @@ describe("Block K K5 — Expert Mode Toggle", () => {
       "ptt-use-vad-toggle",
       "ptt-hot-keepalive",
       "vad-block",
-      "opus-archive-toggle",
       "continuous-mic-hard-cut",
       "model-source-select",
       "overlay-style",
       "diagnostic-logging-toggle",
       "postproc-punctuation",
       "ai-fallback-local-advanced",
-      "tab-btn-modules",
     ].forEach(expectExpertControl);
   });
 });

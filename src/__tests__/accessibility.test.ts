@@ -1,6 +1,6 @@
 // Accessibility helper tests
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { updateRangeAria, updateRecordingStatus, updateTranscribeStatus } from "../accessibility";
+import { updateRangeAria, updateRecordingStatus } from "../accessibility";
 import type { RecordingState } from "../types";
 
 describe("Accessibility Helpers", () => {
@@ -131,106 +131,20 @@ describe("Accessibility Helpers", () => {
     });
   });
 
-  describe("updateTranscribeStatus", () => {
-    let statusDot: HTMLElement;
-    let announcement: HTMLElement;
-
-    beforeEach(() => {
-      statusDot = document.createElement("div");
-      statusDot.id = "transcribe-dot";
-      document.body.appendChild(statusDot);
-
-      announcement = document.createElement("div");
-      announcement.id = "transcribe-announcement";
-      document.body.appendChild(announcement);
-    });
-
-    it("should update aria-label for disabled state", () => {
-      updateTranscribeStatus("disabled");
-
-      expect(statusDot.getAttribute("aria-label")).toBe("Transcribing status: disabled");
-      expect(announcement.textContent).toBe("Transcription disabled.");
-    });
-
-    it("should update aria-label for idle state", () => {
-      updateTranscribeStatus("idle");
-
-      expect(statusDot.getAttribute("aria-label")).toBe("Transcribing status: idle");
-      expect(announcement.textContent).toBe("Transcription idle.");
-    });
-
-    it("should update aria-label for recording state", () => {
-      updateTranscribeStatus("recording");
-
-      expect(statusDot.getAttribute("aria-label")).toBe("Transcribing status: recording");
-      expect(announcement.textContent).toBe("Output monitoring active.");
-    });
-
-    it("should update aria-label for transcribing state", () => {
-      updateTranscribeStatus("transcribing");
-
-      expect(statusDot.getAttribute("aria-label")).toBe("Transcribing status: transcribing");
-      expect(announcement.textContent).toBe("Transcription in progress.");
-    });
-
-    it("should handle missing transcribe-dot element gracefully", () => {
-      document.body.removeChild(statusDot);
-
-      expect(() => updateTranscribeStatus("idle")).not.toThrow();
-      expect(announcement.textContent).toBe("Transcription idle.");
-    });
-
-    it("should handle missing announcement element gracefully", () => {
-      document.body.removeChild(announcement);
-
-      expect(() => updateTranscribeStatus("idle")).not.toThrow();
-      expect(statusDot.getAttribute("aria-label")).toBe("Transcribing status: idle");
-    });
-
-    it("should handle both elements missing gracefully", () => {
-      document.body.removeChild(statusDot);
-      document.body.removeChild(announcement);
-
-      expect(() => updateTranscribeStatus("idle")).not.toThrow();
-    });
-
-    it("should update both elements for all states", () => {
-      const states: RecordingState[] = ["disabled", "idle", "recording", "transcribing"];
-
-      states.forEach((state) => {
-        updateTranscribeStatus(state);
-
-        expect(statusDot.getAttribute("aria-label")).toBe(`Transcribing status: ${state}`);
-        expect(announcement.textContent).toBeTruthy();
-      });
-    });
-  });
-
   describe("Integration - Recording and Transcribe Status", () => {
     it("should handle both status updates independently", () => {
       const recordingDot = document.createElement("div");
       recordingDot.id = "status-dot";
       document.body.appendChild(recordingDot);
 
-      const transcribeDot = document.createElement("div");
-      transcribeDot.id = "transcribe-dot";
-      document.body.appendChild(transcribeDot);
-
       const recordingAnnouncement = document.createElement("div");
       recordingAnnouncement.id = "recording-announcement";
       document.body.appendChild(recordingAnnouncement);
 
-      const transcribeAnnouncement = document.createElement("div");
-      transcribeAnnouncement.id = "transcribe-announcement";
-      document.body.appendChild(transcribeAnnouncement);
-
       updateRecordingStatus("recording");
-      updateTranscribeStatus("idle");
 
       expect(recordingDot.getAttribute("aria-label")).toBe("Recording status: recording");
-      expect(transcribeDot.getAttribute("aria-label")).toBe("Transcribing status: idle");
       expect(recordingAnnouncement.textContent).toBe("Recording started. Speaking now.");
-      expect(transcribeAnnouncement.textContent).toBe("Transcription idle.");
     });
   });
 });

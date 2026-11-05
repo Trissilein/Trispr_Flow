@@ -360,10 +360,6 @@ $copiedCuda = Copy-DirIfExists (Join-Path $installedBinRoot "cuda") (Join-Path $
 $copiedVulkan = Copy-DirIfExists (Join-Path $installedBinRoot "vulkan") (Join-Path $BinRoot "vulkan")
 $copiedQuantize = Copy-FileIfExists (Join-Path $installedBinRoot "quantize.exe") (Join-Path $BinRoot "quantize.exe")
 
-if ($CopyOptionalPayloads) {
-  [void](Copy-DirIfExists (Join-Path $installedBinRoot "ffmpeg") (Join-Path $BinRoot "ffmpeg"))
-}
-
 if (-not $copiedCuda -or -not $copiedVulkan) {
   throw "Failed to hydrate both cuda and vulkan runtime folders from '$installedBinRoot'."
 }

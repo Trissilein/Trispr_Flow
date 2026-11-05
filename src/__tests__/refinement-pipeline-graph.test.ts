@@ -74,7 +74,6 @@ describe("refinement pipeline graph: model not loaded", () => {
     mocks.state.settings = {
       postproc_enabled: true,
       ai_fallback: { enabled: true, provider: "ollama", model: "gemma" },
-      module_settings: { enabled_modules: ["ai_refinement"] },
       providers: { ollama: { preferred_model: "gemma" } },
     };
   });

@@ -89,7 +89,7 @@ async function startModelDownload(): Promise<void> {
   const modelRadio = document.querySelector<HTMLInputElement>(
     'input[name="wizard-model"]:checked'
   );
-  const modelId = modelRadio?.value || "whisper-large-v3-turbo-q8_0";
+  const modelId = modelRadio?.value || "whisper-large-v3-turbo";
   const downloadBtn = document.getElementById("wizard-download-model-btn") as HTMLButtonElement | null;
   const progressDiv = document.getElementById("wizard-download-progress");
   const progressBar = document.getElementById("wizard-download-progress-bar");
@@ -192,7 +192,7 @@ async function finishWizard(): Promise<void> {
   const modelRadio = document.querySelector<HTMLInputElement>(
     'input[name="wizard-model"]:checked'
   );
-  const modelName = modelRadio?.value || "whisper-large-v3-turbo-q8_0";
+  const modelName = modelRadio?.value || "whisper-large-v3-turbo";
 
   const modeRadio = document.querySelector<HTMLInputElement>(
     'input[name="wizard-mode"]:checked'

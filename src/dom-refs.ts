@@ -14,11 +14,9 @@ export const bootstrapLabel = $("bootstrap-label") as HTMLSpanElement | null;
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
 export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElement | null;
-export const tabBtnModules = $("tab-btn-modules") as HTMLButtonElement | null;
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
 export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
-export const tabModules = $("tab-modules") as HTMLDivElement | null;
 export const expertModeToggle = $("expert-mode-toggle") as HTMLInputElement | null;
 export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
 
@@ -26,9 +24,6 @@ export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
 export const statusLabel = $("status-label");
 export const statusDot = $("status-dot") as HTMLSpanElement | null;
 export const recordingPill = $("recording-pill");
-export const transcribeStatusDot = $("transcribe-dot") as HTMLSpanElement | null;
-export const transcribeStatusLabel = $("transcribe-label");
-export const transcribePill = $("transcribe-pill");
 export const refiningStatusDot = $("refining-dot") as HTMLSpanElement | null;
 export const ollamaModelDot = $("ollama-model-dot") as HTMLSpanElement | null;
 export const gpuStatusDot = $("gpu-dot") as HTMLSpanElement | null;
@@ -147,32 +142,6 @@ export const aiFallbackPromptPreviewLabel = $("ai-fallback-prompt-preview-label"
 export const aiFallbackPromptPreviewHint = $("ai-fallback-prompt-preview-hint") as HTMLSpanElement | null;
 export const aiFallbackCustomPrompt = $("ai-fallback-custom-prompt") as HTMLTextAreaElement | null;
 
-// Output / transcribe controls
-export const transcribeEnabledToggle = $("transcribe-enabled-toggle") as HTMLInputElement | null;
-export const transcribeHotkey = $("transcribe-hotkey") as HTMLInputElement | null;
-export const transcribeHotkeyRecord = $("transcribe-hotkey-record") as HTMLButtonElement | null;
-export const transcribeHotkeyStatus = $("transcribe-hotkey-status") as HTMLSpanElement | null;
-export const transcribeDeviceSelect = $("transcribe-device-select") as HTMLSelectElement | null;
-export const transcribeVadToggle = $("transcribe-vad-toggle") as HTMLInputElement | null;
-export const transcribeVadThreshold = $("transcribe-vad-threshold") as HTMLInputElement | null;
-export const transcribeVadThresholdValue = $("transcribe-vad-threshold-value");
-export const transcribeVadThresholdField = $("transcribe-vad-threshold-field");
-export const transcribeVadSilenceField = $("transcribe-vad-silence-field");
-export const transcribeVadSilence = $("transcribe-vad-silence") as HTMLInputElement | null;
-export const transcribeVadSilenceValue = $("transcribe-vad-silence-value");
-export const transcribeMeterFill = $("transcribe-meter-fill");
-export const transcribeMeterDb = $("transcribe-meter-db");
-export const transcribeMeterThreshold = $("transcribe-meter-threshold");
-export const transcribeThresholdDb = $("transcribe-threshold-db");
-export const transcribeThresholdLabel = $("transcribe-threshold-label");
-export const transcribeBatchField = $("transcribe-batch-field");
-export const transcribeBatchInterval = $("transcribe-batch-interval") as HTMLInputElement | null;
-export const transcribeBatchValue = $("transcribe-batch-value");
-export const transcribeOverlapField = $("transcribe-overlap-field");
-export const transcribeChunkOverlap = $("transcribe-chunk-overlap") as HTMLInputElement | null;
-export const transcribeOverlapValue = $("transcribe-overlap-value");
-export const transcribeGain = $("transcribe-gain") as HTMLInputElement | null;
-export const transcribeGainValue = $("transcribe-gain-value");
 export const continuousDumpEnabledToggle = $("continuous-dump-enabled-toggle") as HTMLInputElement | null;
 export const continuousDumpProfile = $("continuous-dump-profile") as HTMLSelectElement | null;
 export const continuousHardCut = $("continuous-hard-cut") as HTMLInputElement | null;
@@ -185,13 +154,6 @@ export const continuousPostRoll = $("continuous-post-roll") as HTMLInputElement 
 export const continuousPostRollValue = $("continuous-post-roll-value");
 export const continuousKeepalive = $("continuous-keepalive") as HTMLInputElement | null;
 export const continuousKeepaliveValue = $("continuous-keepalive-value");
-export const continuousSystemOverrideToggle = $("continuous-system-override-toggle") as HTMLInputElement | null;
-export const continuousSystemSoftFlush = $("continuous-system-soft-flush") as HTMLInputElement | null;
-export const continuousSystemSoftFlushValue = $("continuous-system-soft-flush-value");
-export const continuousSystemSilenceFlush = $("continuous-system-silence-flush") as HTMLInputElement | null;
-export const continuousSystemSilenceFlushValue = $("continuous-system-silence-flush-value");
-export const continuousSystemHardCut = $("continuous-system-hard-cut") as HTMLInputElement | null;
-export const continuousSystemHardCutValue = $("continuous-system-hard-cut-value");
 export const continuousMicOverrideToggle = $("continuous-mic-override-toggle") as HTMLInputElement | null;
 export const continuousMicSoftFlush = $("continuous-mic-soft-flush") as HTMLInputElement | null;
 export const continuousMicSoftFlushValue = $("continuous-mic-soft-flush-value");
@@ -238,23 +200,13 @@ export const overlayHealthNote = $("overlay-health-note") as HTMLSpanElement | n
 
 // History controls
 export const historyList = $("history-list");
-export const historyTabMic = $("history-tab-mic");
-export const historyTabSystem = $("history-tab-system");
-export const historyTabConversation = $("history-tab-conversation");
-export const historyCopyConversation = $("history-copy-conversation") as HTMLButtonElement | null;
 export const historyDeleteConversation = $("history-delete-conversation") as HTMLButtonElement | null;
 export const historyExport = $("history-export") as HTMLButtonElement | null;
-export const openRecordingsBtn = $("open-recordings-btn") as HTMLButtonElement | null;
-export const archiveBrowseBtn = $("archive-browse-btn") as HTMLButtonElement | null;
-export const openModulesBtn = $("open-modules-btn") as HTMLButtonElement | null;
 export const historySearch = $("history-search") as HTMLInputElement | null;
 export const historySearchClear = $("history-search-clear") as HTMLButtonElement | null;
 export const conversationFontControls = $("conversation-font-controls");
 export const conversationFontSize = $("conversation-font-size") as HTMLInputElement | null;
 export const conversationFontSizeValue = $("conversation-font-size-value");
-export const historyAliasControls = $("history-alias-controls") as HTMLDivElement | null;
-export const historyAliasMicInput = $("history-alias-mic-input") as HTMLInputElement | null;
-export const historyAliasSystemInput = $("history-alias-system-input") as HTMLInputElement | null;
 export const refinementInspector = $("refinement-inspector") as HTMLDetailsElement | null;
 export const refinementInspectorEmpty = $("refinement-inspector-empty") as HTMLDivElement | null;
 export const refinementInspectorContent = $("refinement-inspector-content") as HTMLDivElement | null;
@@ -266,8 +218,6 @@ export const refinementInspectorDiff = $("refinement-inspector-diff") as HTMLDiv
 export const refinementInspectorError = $("refinement-inspector-error") as HTMLDivElement | null;
 
 // Modules tab
-export const modulesList = $("modules-list") as HTMLDivElement | null;
-export const modulesStatus = $("modules-status") as HTMLSpanElement | null;
 
 
 // Export dialog
@@ -277,23 +227,12 @@ export const exportDialogClose = $("export-dialog-close") as HTMLButtonElement |
 export const exportCustomRange = $("export-custom-range") as HTMLDivElement | null;
 export const exportCustomFrom = $("export-custom-from") as HTMLInputElement | null;
 export const exportCustomTo = $("export-custom-to") as HTMLInputElement | null;
-export const exportIncludeMic = $("export-include-mic") as HTMLInputElement | null;
-export const exportIncludeSystem = $("export-include-system") as HTMLInputElement | null;
 export const exportDialogFormat = $("export-dialog-format") as HTMLSelectElement | null;
 export const exportPreviewCount = $("export-preview-count") as HTMLSpanElement | null;
 export const exportPreviewSpan = $("export-preview-span") as HTMLSpanElement | null;
 export const exportDialogRun = $("export-dialog-run") as HTMLButtonElement | null;
 
 // Archive browser
-export const archiveBrowser = $("archive-browser") as HTMLDivElement | null;
-export const archiveBrowserBackdrop = $("archive-browser-backdrop") as HTMLDivElement | null;
-export const archiveBrowserClose = $("archive-browser-close") as HTMLButtonElement | null;
-export const archiveMicPartitions = $("archive-mic-partitions") as HTMLDivElement | null;
-export const archiveSystemPartitions = $("archive-system-partitions") as HTMLDivElement | null;
-export const archiveSelectionMeta = $("archive-selection-meta") as HTMLSpanElement | null;
-export const archiveEntries = $("archive-entries") as HTMLDivElement | null;
-export const archiveExportFormat = $("archive-export-format") as HTMLSelectElement | null;
-export const archiveExportBtn = $("archive-export-btn") as HTMLButtonElement | null;
 
 // Extra hotkeys controls
 export const toggleActivationWordsHotkey = $("toggle-activation-words-hotkey") as HTMLInputElement | null;
@@ -305,11 +244,6 @@ export const topicKeywordsList = $("topic-keywords-list") as HTMLDivElement | nu
 export const topicKeywordsReset = $("topic-keywords-reset") as HTMLButtonElement | null;
 
 // Quality & Encoding controls
-export const opusEnabledToggle = $("opus-enabled-toggle") as HTMLInputElement | null;
-export const opusArchiveToggle = $("opus-archive-toggle") as HTMLInputElement | null;
-export const opusBitrateSelect = $("opus-bitrate-select") as HTMLSelectElement | null;
-export const autoSaveSystemAudioToggle = $("auto-save-system-audio-toggle") as HTMLInputElement | null;
-export const autoSaveMicAudioToggle = $("auto-save-mic-audio-toggle") as HTMLInputElement | null;
 
 // Model manager controls
 export const modelSourceSelect = $("model-source-select") as HTMLSelectElement | null;
@@ -325,15 +259,6 @@ export const modelList = $("model-list");
 export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
 
 // Module config modal
-export const moduleConfigModal = $("module-config-modal") as HTMLDivElement | null;
-export const moduleConfigModalBackdrop = $("module-config-modal-backdrop") as HTMLDivElement | null;
-export const moduleConfigModalClose = $("module-config-modal-close") as HTMLButtonElement | null;
-export const moduleConfigModalName = $("module-config-modal-name") as HTMLElement | null;
-export const moduleConfigModalMeta = $("module-config-modal-meta") as HTMLElement | null;
-export const moduleConfigModalDesc = $("module-config-modal-desc") as HTMLElement | null;
-export const moduleConfigModalUsage = $("module-config-modal-usage") as HTMLElement | null;
-export const moduleConfigModalDeps = $("module-config-modal-deps") as HTMLDivElement | null;
-export const moduleConfigModalFeedback = $("module-config-modal-feedback") as HTMLDivElement | null;
 
 // Model panel (queried by data attribute, not id)
 export const modelPanel =

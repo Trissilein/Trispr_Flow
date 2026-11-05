@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -1457,9 +1458,11 @@ pub(crate) fn clear_hidden_external_models(
 }
 
 #[tauri::command]
-pub(crate) fn pick_model_dir() -> Option<String> {
-    rfd::FileDialog::new()
-        .pick_folder()
+pub(crate) async fn pick_model_dir(app: AppHandle) -> Option<String> {
+    app.dialog()
+        .file()
+        .blocking_pick_folder()
+        .and_then(|path| path.into_path().ok())
         .map(|path| path.to_string_lossy().to_string())
 }
 

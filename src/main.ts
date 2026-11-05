@@ -26,7 +26,6 @@ import type {
   DownloadError,
   QuantizeProgress,
   ErrorEvent,
-  TranscribeBacklogStatus,
   OllamaPullProgress,
   OllamaPullComplete,
   OllamaPullError,
@@ -50,12 +49,9 @@ import type {
 import {
   settings,
   history,
-  transcribeHistory,
   setSettings,
   setHistory,
-  setTranscribeHistory,
   setDevices,
-  setOutputDevices,
   models,
   setModels,
   setDynamicSustainThreshold,
@@ -71,7 +67,7 @@ import {
 import * as dom from "./dom-refs";
 import { renderSettings } from "./settings";
 import { renderAIFallbackSettingsUi } from "./settings/ai-refinement.settings";
-import { renderDevices, renderOutputDevices } from "./devices";
+import { renderDevices } from "./devices";
 import {
   renderHero,
   setCaptureStatus,
@@ -79,36 +75,24 @@ import {
   setGpuStats,
   setOllamaModelState,
   setRefiningActive,
-  setTranscribeStatus,
   updateThresholdMarkers,
   type GpuStats,
 } from "./ui-state";
-import { scheduleHistoryRender, setHistoryTab, initHistoryDelegation } from "./history";
+import { scheduleHistoryRender, initHistoryDelegation } from "./history";
 import { initPanelState, isPanelCollapsed, setPanelCollapsed } from "./panels";
 import { renderModels, refreshModels, refreshModelsDir } from "./models";
 import {
   wireEvents,
   cleanupWindowListeners,
 } from "./event-listeners";
-import {
-  initMainTab,
-  reconcileMainTabVisibility,
-} from "./wiring/app-chrome.wire";
+import { initMainTab } from "./wiring/app-chrome.wire";
 import { scheduleSettingsRender } from "./wiring/wire-helpers";
 import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
-import { dumpHistoryToFile, initLiveDump } from "./live-dump";
 import { initExportDialog } from "./export-dialog";
-import { initArchiveBrowser } from "./archive-browser";
 import { initExpertMode } from "./expert-mode";
-import {
-  applySettingsVisibility,
-  initSettingsVisibility,
-  refreshSettingsVisibilityEditor,
-} from "./settings-visibility";
-import { initModulesHub, refreshModulesHub } from "./modules-hub";
 import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
 import { ingestEditDelta } from "./vocab-auto-learn";
@@ -151,7 +135,6 @@ import { OLLAMA_SETTINGS_CHANGED_POLICY } from "./ollama-refresh-policy";
 
 // Track event listeners for cleanup to prevent memory leaks
 let eventUnlisteners: Array<() => void> = [];
-let backlogWarningToastId: string | null = null;
 let overlayHealthToastId: string | null = null;
 let ollamaRuntimeLoadingToastId: string | null = null;
 const whisperFatalLastShown = new Map<string, number>();
@@ -309,10 +292,6 @@ function applyStartupReadinessUi(): void {
     dom.pttHotkeyRecord,
     dom.toggleHotkey,
     dom.toggleHotkeyRecord,
-    dom.transcribeEnabledToggle,
-    dom.transcribeHotkey,
-    dom.transcribeHotkeyRecord,
-    dom.transcribeDeviceSelect,
   ];
   for (const control of controls) {
     if (control) {
@@ -399,34 +378,11 @@ function cleanupEventListeners() {
   cleanupWindowListeners();
   eventUnlisteners.forEach((unlisten) => unlisten());
   eventUnlisteners = [];
-  dismissToast(backlogWarningToastId);
-  backlogWarningToastId = null;
   dismissToast(overlayHealthToastId);
   overlayHealthToastId = null;
 }
 
 function initConversationView() {
-  const params = new URLSearchParams(window.location.search);
-  const isConversationOnly = params.get("view") === "conversation";
-  const applyConversationOnly = () => {
-    document.body.classList.add("conversation-only");
-    setHistoryTab("conversation");
-  };
-  if (isConversationOnly) {
-    applyConversationOnly();
-  }
-
-  if ((window as unknown as { __TRISPR_VIEW__?: string }).__TRISPR_VIEW__ === "conversation") {
-    applyConversationOnly();
-  }
-
-  const onTrisprView = (event: Event) => {
-    const detail = (event as CustomEvent<string>).detail;
-    if (detail === "conversation") applyConversationOnly();
-  };
-  window.addEventListener("trispr:view", onTrisprView);
-  eventUnlisteners.push(() => window.removeEventListener("trispr:view", onTrisprView));
-
   const stored = Number(localStorage.getItem("conversationFontSize") ?? "16");
   const size = Number.isFinite(stored) ? stored : 16;
   document.documentElement.style.setProperty("--conversation-font-size", `${size}px`);
@@ -444,8 +400,6 @@ function initConversationView() {
 // the latest value and flush once per animation frame.
 
 let _pendingAudioLevel: number | null = null;
-let _pendingTranscribeLevel: number | null = null;
-let _pendingTranscribeDb: number | null = null;
 let _meterRafId: number | null = null;
 
 function flushMeterUpdates(): void {
@@ -460,22 +414,6 @@ function flushMeterUpdates(): void {
     if (dom.vadLevelDbm) {
       const db = levelToDb(level);
       dom.vadLevelDbm.textContent = db <= -60 ? "-∞ dB" : `${db.toFixed(0)} dB`;
-    }
-  }
-
-  if (_pendingTranscribeLevel !== null) {
-    const level = _pendingTranscribeLevel;
-    _pendingTranscribeLevel = null;
-    if (dom.transcribeMeterFill) {
-      dom.transcribeMeterFill.style.width = `${Math.round(level * 100)}%`;
-    }
-  }
-
-  if (_pendingTranscribeDb !== null) {
-    const value = _pendingTranscribeDb;
-    _pendingTranscribeDb = null;
-    if (dom.transcribeMeterDb) {
-      dom.transcribeMeterDb.textContent = `${value.toFixed(1)} dB`;
     }
   }
 }
@@ -511,7 +449,7 @@ function cancelPendingRenderFrames(): void {
   if (_meterRafId !== null) { cancelAnimationFrame(_meterRafId); _meterRafId = null; }
   if (_ollamaRenderFrame !== null) { cancelAnimationFrame(_ollamaRenderFrame); _ollamaRenderFrame = null; }
   if (_modelRenderFrame !== null) { cancelAnimationFrame(_modelRenderFrame); _modelRenderFrame = null; }
-  _pendingAudioLevel = _pendingTranscribeLevel = _pendingTranscribeDb = null;
+  _pendingAudioLevel = null;
 }
 
 async function bootstrap() {
@@ -544,14 +482,12 @@ async function bootstrap() {
   const [
     fetchedSettings,
     fetchedDevices,
-    fetchedOutputDevices,
     fetchedVersion,
     fetchedStartupStatus,
     fetchedRuntimeDiagnostics,
   ] = await Promise.all([
     invoke<Settings>("get_settings"),
     invoke<AudioDevice[]>("list_audio_devices").catch((): AudioDevice[] => []),
-    invoke<AudioDevice[]>("list_output_devices").catch((): AudioDevice[] => []),
     getVersion().catch(() => null),
     invoke<StartupStatus>("get_startup_status"),
     invoke<RuntimeDiagnostics>("get_runtime_diagnostics").catch(() => null),
@@ -561,15 +497,12 @@ async function bootstrap() {
   clearTimeout(bootstrapWatchdog);
   traceFrontendInfo("bootstrap", "initial configuration loaded", {
     audioDevices: fetchedDevices.length,
-    outputDevices: fetchedOutputDevices.length,
     startupInteractive: fetchedStartupStatus?.interactive ?? null,
     ollamaStarting: fetchedStartupStatus?.ollama_starting ?? null,
   });
   setSettings(fetchedSettings);
   setDevices(fetchedDevices);
-  setOutputDevices(fetchedOutputDevices);
   setHistory([]);
-  setTranscribeHistory([]);
   setModels([]);
   setStartupStatus(fetchedStartupStatus);
   setRuntimeDiagnostics(fetchedRuntimeDiagnostics);
@@ -588,21 +521,7 @@ async function bootstrap() {
   initUnifiedTooltips();
   initHistoryDelegation();
   initExportDialog();
-  initArchiveBrowser();
-  const reconcileSettingsVisibility = () => reconcileMainTabVisibility();
-  const applySettingsVisibilityMode = () => applySettingsVisibility();
-  const refreshDynamicSettingsVisibility = () => refreshSettingsVisibilityEditor();
-  window.addEventListener("settings-visibility:applied", reconcileSettingsVisibility);
-  window.addEventListener("settings-visibility:mode-changed", applySettingsVisibilityMode);
-  window.addEventListener("settings-visibility:dynamic-rendered", refreshDynamicSettingsVisibility);
-  window.addEventListener("settings-visibility:tab-switched", refreshDynamicSettingsVisibility);
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:applied", reconcileSettingsVisibility));
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:mode-changed", applySettingsVisibilityMode));
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:dynamic-rendered", refreshDynamicSettingsVisibility));
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:tab-switched", refreshDynamicSettingsVisibility));
   initExpertMode();
-  initSettingsVisibility();
-  initModulesHub();
   void initOnboardingWizard();
   initPipelineStatus();
 
@@ -612,16 +531,13 @@ async function bootstrap() {
   // Phase 3: Render UI synchronously — UI becomes interactive here
   try {
     renderDevices();
-    renderOutputDevices();
     renderSettings();
     renderHero();
     applyStartupReadinessUi();
     setCaptureStatus("idle");
-    setTranscribeStatus("idle");
     setRefiningActive(false);
     renderRefinementInspector();
     renderModels();
-    refreshModulesHub();
   } catch (renderError) {
     console.error("Non-fatal render error during bootstrap:", renderError);
     traceFrontendError("bootstrap.render", "non-fatal render error", {
@@ -640,19 +556,16 @@ async function bootstrap() {
   void (async () => {
     try {
       traceFrontendInfo("bootstrap.background", "background init start");
-      const [fetchedHistory, fetchedTranscribeHistory, fetchedModels] = await Promise.all([
+      const [fetchedHistory, fetchedModels] = await Promise.all([
         invoke<HistoryEntry[]>("get_history").catch((): HistoryEntry[] => []),
-        invoke<HistoryEntry[]>("get_transcribe_history").catch((): HistoryEntry[] => []),
         invoke<ModelInfo[]>("list_models").catch((): ModelInfo[] => []),
       ]);
       traceFrontendInfo("bootstrap.background", "heavy data loaded", {
         history: fetchedHistory.length,
-        transcribeHistory: fetchedTranscribeHistory.length,
         models: fetchedModels.length,
       });
       setHistory(fetchedHistory);
-      setTranscribeHistory(fetchedTranscribeHistory);
-      restoreRefinementInspector(fetchedHistory.concat(fetchedTranscribeHistory));
+      restoreRefinementInspector(fetchedHistory);
       setModels(fetchedModels);
       scheduleHistoryRender();
       renderModels();
@@ -741,10 +654,8 @@ async function bootstrap() {
       setter(event.payload ?? []);
       scheduleHistoryRender();
       // Prune orphaned refinement snapshots from localStorage
-      const allIds = new Set([...history, ...transcribeHistory].map((e) => e.id));
+      const allIds = new Set(history.map((e) => e.id));
       pruneOrphanedSnapshots(allIds);
-      // Live dump to file for crash recovery
-      dumpHistoryToFile().catch(() => { });
     };
   }
 
@@ -752,14 +663,12 @@ async function bootstrap() {
   const _newListeners = await Promise.all([
     listen<Settings>("settings-changed", (event) => {
       setSettings(event.payload ?? null);
-      reconcileMainTabVisibility();
       if (!isRefinementEnabled()) {
         resetTrackedRefinementJobs();
       }
       scheduleSettingsRender();
       renderHero();
       renderModels();
-      refreshModulesHub();
       void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
       if (isRefinementEnabled()) {
         if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
@@ -779,33 +688,16 @@ async function bootstrap() {
       const state = event.payload as TranscriptionStatus;
       setCaptureStatus(state ?? "idle");
     }),
-    listen<string>("transcribe:state", (event) => {
-      const state = event.payload as TranscriptionStatus;
-      setTranscribeStatus(state ?? "idle");
-    }),
     listen<TranscriptionGpuActivityEvent>("transcription:gpu-activity", (event) => {
       setGpuActivity(event.payload);
     }),
-    listen<number>("transcribe:level", (event) => {
-      _pendingTranscribeLevel = Math.max(0, Math.min(1, event.payload ?? 0));
-      scheduleMeterFlush();
-    }),
-    listen<number>("transcribe:db", (event) => {
-      _pendingTranscribeDb = Math.max(-60, Math.min(0, event.payload ?? -60));
-      scheduleMeterFlush();
-    }),
     listen<HistoryEntry[]>("history:updated", makeHistoryUpdateHandler(setHistory)),
-    listen<HistoryEntry[]>("transcribe:history-updated", makeHistoryUpdateHandler(setTranscribeHistory)),
     listen<{ pasted: string; submitted: string; same_target: boolean; pattern_used: string }>(
       "enter_capture:edit_detected",
       (event) => {
         ingestEditDelta(event.payload.pasted, event.payload.submitted);
       },
     ),
-    listen("module:state-changed", () => {
-      reconcileMainTabVisibility();
-      refreshModulesHub();
-    }),
     listen<{ message: string }>("whisper:server-fatal", (event) => {
       const message = event.payload?.message?.trim();
       if (!message) return;
@@ -1081,47 +973,6 @@ async function bootstrap() {
         duration: 7000,
       });
     }),
-    listen<TranscribeBacklogStatus>("transcribe:backlog-expanded", (event) => {
-      const payload = event.payload;
-      if (!payload) return;
-      dismissToast(backlogWarningToastId);
-      backlogWarningToastId = null;
-      showToast({
-        type: "success",
-        title: "Output Backlog Expanded",
-        message: `New capacity: ${payload.capacity_chunks} chunks (${payload.percent_used}% used).`,
-        duration: 5000,
-      });
-    }),
-    listen<TranscribeBacklogStatus>("transcribe:backlog-warning", (event) => {
-      const payload = event.payload;
-      if (!payload) return;
-
-      dismissToast(backlogWarningToastId);
-
-      const droppedSuffix = payload.dropped_chunks > 0 ? ` Dropped chunks: ${payload.dropped_chunks}.` : "";
-      backlogWarningToastId = showToast({
-        type: "warning",
-        title: "Output Backlog Near Capacity",
-        message: `Queue at ${payload.percent_used}% (${payload.queued_chunks}/${payload.capacity_chunks} chunks). Auto-expand is scheduled.${droppedSuffix}`,
-        duration: 0,
-        actionLabel: "Expand now",
-        actionDismiss: false,
-        onAction: async () => {
-          try {
-            await invoke<TranscribeBacklogStatus>("expand_transcribe_backlog");
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            showToast({
-              type: "error",
-              title: "Backlog Expansion Failed",
-              message,
-              duration: 7000,
-            });
-          }
-        },
-      });
-    }),
     // Listen for app-wide errors from backend
     listen<ErrorEvent>("app:error", (event) => {
       showErrorToast(event.payload.error, event.payload.context);
@@ -1144,9 +995,6 @@ async function bootstrap() {
     }),
   ]);
   eventUnlisteners.push(..._newListeners);
-
-  // Initialize live transcript dump for crash recovery
-  initLiveDump();
 }
 
 async function checkModelOnStartup() {

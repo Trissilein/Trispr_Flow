@@ -1,9 +1,6 @@
 // Type definitions for Trispr Flow application
 
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
-export type ModuleId = "ai_refinement" | "opus";
-export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
-export type ModulePermission = string;
 export type RefinementPromptPreset =
   | "wording"
   | "summary"
@@ -34,26 +31,6 @@ export interface EditSubstitution {
   count: number;
   first_seen_ms: number;
   last_seen_ms: number;
-}
-
-export interface ModuleDescriptor {
-  id: ModuleId | string;
-  name: string;
-  version: string;
-  state: ModuleState;
-  dependencies: string[];
-  permissions: ModulePermission[];
-  restart_required: boolean;
-  last_error?: string | null;
-  bundled: boolean;
-  core: boolean;
-  toggleable: boolean;
-}
-
-export interface ModuleSettings {
-  enabled_modules: string[];
-  consented_permissions: Record<string, string[]>;
-  module_overrides: Record<string, unknown>;
 }
 
 export interface AIFallbackSettings {
@@ -108,7 +85,6 @@ export interface Settings {
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
   setup: SetupSettings;
-  module_settings?: ModuleSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   diagnostic_logging_enabled?: boolean;
@@ -118,19 +94,9 @@ export interface Settings {
   vad_threshold_start: number;
   vad_threshold_sustain: number;
   vad_silence_ms: number;
-  transcribe_enabled: boolean;
-  transcribe_hotkey: string;
   hotkey_toggle_activation_words: string;
-  transcribe_output_device: string;
-  transcribe_vad_mode: boolean;
-  transcribe_vad_threshold: number;
-  transcribe_vad_silence_ms: number;
-  transcribe_batch_interval_ms: number;
-  transcribe_chunk_overlap_ms: number;
-  transcribe_input_gain_db: number;
   mic_input_gain_db: number;
   history_alias_mic: string;
-  history_alias_system: string;
   capture_enabled: boolean;
   model_source: "default" | "custom";
   model_custom_url: string;
@@ -190,10 +156,6 @@ export interface Settings {
   postproc_llm_model: string;
   postproc_llm_prompt: string;
   // Recording export settings
-  opus_enabled?: boolean;
-  opus_bitrate_kbps?: number;
-  auto_save_system_audio?: boolean;
-  auto_save_mic_audio?: boolean;
   continuous_dump_enabled?: boolean;
   continuous_dump_profile?: "balanced" | "low_latency" | "high_quality";
   continuous_soft_flush_ms?: number;
@@ -207,10 +169,6 @@ export interface Settings {
   continuous_mic_soft_flush_ms?: number;
   continuous_mic_silence_flush_ms?: number;
   continuous_mic_hard_cut_ms?: number;
-  continuous_system_override_enabled?: boolean;
-  continuous_system_soft_flush_ms?: number;
-  continuous_system_silence_flush_ms?: number;
-  continuous_system_hard_cut_ms?: number;
   transcribe_backend?: "whisper_cpp";
   local_backend_preference?: "auto" | "cuda" | "vulkan";
   // Window state fields from backend
@@ -434,7 +392,6 @@ export interface TranscriptionGpuActivityEvent {
 }
 
 export type RecordingState = "disabled" | "idle" | "recording" | "transcribing";
-export type HistoryTab = "mic" | "system" | "conversation";
 
 // Ollama model pull events
 export interface OllamaPullProgress {
@@ -710,15 +667,3 @@ export interface PartitionInfo {
   is_active: boolean;
 }
 
-export interface ModuleHealthStatus {
-  module_id: string;
-  state: "ok" | "needs_setup" | "fallback_active" | "local_warning" | "release_blocker" | "degraded" | "error";
-  detail: string;
-}
-
-export interface ModuleUpdateInfo {
-  module_id: string;
-  current_version: string;
-  latest_version: string;
-  update_available: boolean;
-}

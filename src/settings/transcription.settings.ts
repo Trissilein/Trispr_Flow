@@ -8,33 +8,11 @@ import { VAD_DB_FLOOR, formatHotkeyForDisplay, thresholdToDb } from "../ui-helpe
 //
 // Exports:
 //   Primary   - renderTranscriptionSettings()      called by renderSettings() in index.ts
-//   Secondary - updateTranscribeVadVisibility()    called by transcription.wire.ts
-//               updateTranscribeThreshold()        called by transcription.wire.ts
-//               syncCaptureModeVisibility()        called by transcription.wire.ts
+//   Secondary - syncCaptureModeVisibility()        called by transcription.wire.ts
 //   Language  - pure ASR/post-processing derivation helpers live in ../language-utils.
 //
 // Per Decision 6 (settings-decomposition.md): all other functions are private.
 // syncDerivedLanguageSettings() moved to settings-persist.ts during S5 to avoid index.ts dependency cycles.
-
-export function updateTranscribeVadVisibility(enabled: boolean): void {
-    if (dom.transcribeMeterThreshold) {
-        dom.transcribeMeterThreshold.style.display = enabled ? "block" : "none";
-    }
-    if (dom.transcribeThresholdLabel) {
-        dom.transcribeThresholdLabel.style.display = enabled ? "block" : "none";
-    }
-}
-
-export function updateTranscribeThreshold(threshold: number): void {
-    const db = thresholdToDb(threshold, VAD_DB_FLOOR);
-    if (dom.transcribeThresholdDb) {
-        dom.transcribeThresholdDb.textContent = `${db.toFixed(1)} dB`;
-    }
-    if (dom.transcribeMeterThreshold) {
-        const pos = (db - VAD_DB_FLOOR) / (0 - VAD_DB_FLOOR);
-        dom.transcribeMeterThreshold.style.left = `${Math.round(pos * 100)}%`;
-    }
-}
 
 export function syncCaptureModeVisibility(mode: string, pttUseVad = false): void {
     const hotkeysEnabled = mode === "ptt";
@@ -78,7 +56,6 @@ export function renderTranscriptionSettings(): void {
     if (!settings) return;
 
     if (dom.captureEnabledToggle) dom.captureEnabledToggle.checked = settings.capture_enabled;
-    if (dom.transcribeEnabledToggle) dom.transcribeEnabledToggle.checked = settings.transcribe_enabled;
     if (dom.modeSelect) dom.modeSelect.value = settings.mode;
     if (dom.pttHotkey) dom.pttHotkey.value = formatHotkeyForDisplay(settings.hotkey_ptt);
     if (dom.toggleHotkey) dom.toggleHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle);
@@ -133,72 +110,7 @@ export function renderTranscriptionSettings(): void {
     if (dom.vadThresholdValue) dom.vadThresholdValue.textContent = `${Math.round(vadThresholdDb)} dB`;
     if (dom.vadSilence) dom.vadSilence.value = settings.vad_silence_ms.toString();
     if (dom.vadSilenceValue) dom.vadSilenceValue.textContent = `${settings.vad_silence_ms} ms`;
-    if (dom.transcribeHotkey) dom.transcribeHotkey.value = formatHotkeyForDisplay(settings.transcribe_hotkey);
     if (dom.toggleActivationWordsHotkey) {
         dom.toggleActivationWordsHotkey.value = formatHotkeyForDisplay(settings.hotkey_toggle_activation_words);
-    }
-    if (dom.transcribeDeviceSelect) {
-        dom.transcribeDeviceSelect.value = settings.transcribe_output_device;
-        // If the stored device ID is not present in the current option list, the browser
-        // silently leaves the dropdown on "Default (System)" (value = "default").
-        // Sync the settings object so the next persistSettings() sends the actual value.
-        if (dom.transcribeDeviceSelect.value !== settings.transcribe_output_device) {
-            settings.transcribe_output_device = dom.transcribeDeviceSelect.value;
-        }
-    }
-    if (dom.transcribeVadToggle) dom.transcribeVadToggle.checked = settings.transcribe_vad_mode;
-    const transcribeThresholdDb = thresholdToDb(settings.transcribe_vad_threshold, VAD_DB_FLOOR);
-    if (dom.transcribeVadThreshold) {
-        dom.transcribeVadThreshold.value = Math.round(transcribeThresholdDb).toString();
-    }
-    if (dom.transcribeVadThresholdValue) {
-        dom.transcribeVadThresholdValue.textContent = `${Math.round(transcribeThresholdDb)} dB`;
-    }
-    if (dom.transcribeVadSilence) {
-        dom.transcribeVadSilence.value = settings.transcribe_vad_silence_ms.toString();
-    }
-    if (dom.transcribeVadSilenceValue) {
-        dom.transcribeVadSilenceValue.textContent = `${Math.round(settings.transcribe_vad_silence_ms / 100) / 10}s`;
-    }
-    updateTranscribeThreshold(settings.transcribe_vad_threshold);
-    updateTranscribeVadVisibility(settings.transcribe_vad_mode);
-    if (dom.transcribeBatchInterval) {
-        dom.transcribeBatchInterval.value = settings.transcribe_batch_interval_ms.toString();
-    }
-    if (dom.transcribeBatchValue) {
-        dom.transcribeBatchValue.textContent = `${Math.round(settings.transcribe_batch_interval_ms / 1000)}s`;
-    }
-    if (dom.transcribeChunkOverlap) {
-        dom.transcribeChunkOverlap.value = settings.transcribe_chunk_overlap_ms.toString();
-    }
-    if (dom.transcribeOverlapValue) {
-        dom.transcribeOverlapValue.textContent = `${(settings.transcribe_chunk_overlap_ms / 1000).toFixed(1)}s`;
-    }
-    if (dom.transcribeGain) {
-        dom.transcribeGain.value = Math.round(settings.transcribe_input_gain_db).toString();
-    }
-    if (dom.transcribeGainValue) {
-        const gain = Math.round(settings.transcribe_input_gain_db);
-        dom.transcribeGainValue.textContent = `${gain >= 0 ? "+" : ""}${gain} dB`;
-    }
-    if (dom.transcribeBatchField) {
-        const disabled = settings.transcribe_vad_mode;
-        dom.transcribeBatchField.classList.toggle("is-disabled", disabled);
-        dom.transcribeBatchInterval?.toggleAttribute("disabled", disabled);
-    }
-    if (dom.transcribeOverlapField) {
-        const disabled = settings.transcribe_vad_mode;
-        dom.transcribeOverlapField.classList.toggle("is-disabled", disabled);
-        dom.transcribeChunkOverlap?.toggleAttribute("disabled", disabled);
-    }
-    if (dom.transcribeVadThresholdField) {
-        const disabled = !settings.transcribe_vad_mode;
-        dom.transcribeVadThresholdField.classList.toggle("is-disabled", disabled);
-        dom.transcribeVadThreshold?.toggleAttribute("disabled", disabled);
-    }
-    if (dom.transcribeVadSilenceField) {
-        const disabled = !settings.transcribe_vad_mode;
-        dom.transcribeVadSilenceField.classList.toggle("is-disabled", disabled);
-        dom.transcribeVadSilence?.toggleAttribute("disabled", disabled);
     }
 }

@@ -3,7 +3,6 @@ import { settings } from "../state";
 
 export function ensureContinuousDumpDefaults() {
   if (!settings) return;
-  settings.auto_save_mic_audio ??= false;
   settings.continuous_dump_enabled ??= true;
   settings.continuous_dump_profile ??= "balanced";
   settings.continuous_soft_flush_ms ??= 10000;
@@ -17,10 +16,6 @@ export function ensureContinuousDumpDefaults() {
   settings.continuous_mic_soft_flush_ms ??= settings.continuous_soft_flush_ms;
   settings.continuous_mic_silence_flush_ms ??= settings.continuous_silence_flush_ms;
   settings.continuous_mic_hard_cut_ms ??= settings.continuous_hard_cut_ms;
-  settings.continuous_system_override_enabled ??= false;
-  settings.continuous_system_soft_flush_ms ??= settings.continuous_soft_flush_ms;
-  settings.continuous_system_silence_flush_ms ??= settings.continuous_silence_flush_ms;
-  settings.continuous_system_hard_cut_ms ??= settings.continuous_hard_cut_ms;
 }
 
 export function renderContinuousDumpSettings(): void {
@@ -60,27 +55,6 @@ export function renderContinuousDumpSettings(): void {
   }
   if (dom.continuousKeepaliveValue) {
     dom.continuousKeepaliveValue.textContent = `${Math.round((settings.continuous_idle_keepalive_ms ?? 60000) / 1000)}s`;
-  }
-  if (dom.continuousSystemOverrideToggle) {
-    dom.continuousSystemOverrideToggle.checked = settings.continuous_system_override_enabled ?? false;
-  }
-  if (dom.continuousSystemSoftFlush) {
-    dom.continuousSystemSoftFlush.value = String(settings.continuous_system_soft_flush_ms ?? 10000);
-  }
-  if (dom.continuousSystemSoftFlushValue) {
-    dom.continuousSystemSoftFlushValue.textContent = `${Math.round((settings.continuous_system_soft_flush_ms ?? 10000) / 1000)}s`;
-  }
-  if (dom.continuousSystemSilenceFlush) {
-    dom.continuousSystemSilenceFlush.value = String(settings.continuous_system_silence_flush_ms ?? 1200);
-  }
-  if (dom.continuousSystemSilenceFlushValue) {
-    dom.continuousSystemSilenceFlushValue.textContent = `${((settings.continuous_system_silence_flush_ms ?? 1200) / 1000).toFixed(1)}s`;
-  }
-  if (dom.continuousSystemHardCut) {
-    dom.continuousSystemHardCut.value = String(settings.continuous_system_hard_cut_ms ?? 45000);
-  }
-  if (dom.continuousSystemHardCutValue) {
-    dom.continuousSystemHardCutValue.textContent = `${Math.round((settings.continuous_system_hard_cut_ms ?? 45000) / 1000)}s`;
   }
   if (dom.continuousMicOverrideToggle) {
     dom.continuousMicOverrideToggle.checked = settings.continuous_mic_override_enabled ?? false;

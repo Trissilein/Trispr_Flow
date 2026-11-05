@@ -1,20 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as dom from "./dom-refs";
 import { buildExportText, type ExportFormat } from "./history";
-import { appRuntimeStartedMs, history, transcribeHistory } from "./state";
+import { appRuntimeStartedMs, history } from "./state";
 import { focusFirstElement, trapFocusInModal } from "./modal-focus";
 import { showToast } from "./toast";
 import type { HistoryEntry, PartitionInfo } from "./types";
 
-type HistoryKind = "mic" | "system";
+type HistoryKind = "mic";
 type ExportRange = "session" | "today" | "yesterday" | "week" | "month" | "custom";
 
 interface ExportConfig {
   range: ExportRange;
   customFrom?: number;
   customTo?: number;
-  includeMic: boolean;
-  includeSystem: boolean;
   format: ExportFormat;
 }
 
@@ -68,8 +66,6 @@ function readConfig(): ExportConfig {
     range: activeRange,
     customFrom: parseDateTimeLocal(dom.exportCustomFrom?.value),
     customTo: parseDateTimeLocal(dom.exportCustomTo?.value),
-    includeMic: dom.exportIncludeMic?.checked ?? true,
-    includeSystem: dom.exportIncludeSystem?.checked ?? true,
     format,
   };
 }
@@ -171,35 +167,18 @@ async function gatherEntries(config: ExportConfig): Promise<HistoryEntry[]> {
 
   const collected: HistoryEntry[] = [];
 
-  if (config.includeMic) {
-    collected.push(...history.filter((entry) => entry.timestamp_ms >= fromMs && entry.timestamp_ms <= toMs));
-  }
-  if (config.includeSystem) {
-    collected.push(...transcribeHistory.filter((entry) => entry.timestamp_ms >= fromMs && entry.timestamp_ms <= toMs));
-  }
+  collected.push(...history.filter((entry) => entry.timestamp_ms >= fromMs && entry.timestamp_ms <= toMs));
 
   const neededKeys = computeNeededPartitionKeys(fromMs, toMs);
   const sessionCrossesMonthBoundary = config.range === "session" && neededKeys.length > 1;
   if (config.range !== "session" || sessionCrossesMonthBoundary) {
     if (neededKeys.length > 0) {
-      if (config.includeMic) {
-        const partitions = await listPartitions("mic");
-        const available = new Set(partitions.map((partition) => partition.key));
-        for (const key of neededKeys) {
-          if (!available.has(key)) continue;
-          const entries = await loadPartition("mic", key);
-          collected.push(...entries);
-        }
-      }
-
-      if (config.includeSystem) {
-        const partitions = await listPartitions("system");
-        const available = new Set(partitions.map((partition) => partition.key));
-        for (const key of neededKeys) {
-          if (!available.has(key)) continue;
-          const entries = await loadPartition("system", key);
-          collected.push(...entries);
-        }
+      const partitions = await listPartitions("mic");
+      const available = new Set(partitions.map((partition) => partition.key));
+      for (const key of neededKeys) {
+        if (!available.has(key)) continue;
+        const entries = await loadPartition("mic", key);
+        collected.push(...entries);
       }
     }
   }
@@ -231,13 +210,6 @@ async function updatePreview(): Promise<void> {
   const generation = ++previewGeneration;
   const config = readConfig();
   const [fromMs, toMs] = computeRangeTimestamps(config);
-
-  if (!config.includeMic && !config.includeSystem) {
-    if (dom.exportPreviewCount) dom.exportPreviewCount.textContent = "0 entries";
-    if (dom.exportPreviewSpan) dom.exportPreviewSpan.textContent = "Select at least one source.";
-    if (dom.exportDialogRun) dom.exportDialogRun.disabled = true;
-    return;
-  }
 
   if (fromMs > toMs) {
     if (dom.exportPreviewCount) dom.exportPreviewCount.textContent = "0 entries";
@@ -282,16 +254,6 @@ async function updatePreview(): Promise<void> {
 
 async function executeExport(): Promise<void> {
   const config = readConfig();
-  if (!config.includeMic && !config.includeSystem) {
-    showToast({
-      type: "warning",
-      title: "Export blocked",
-      message: "Select at least one source.",
-      duration: 3500,
-    });
-    return;
-  }
-
   const entries = await gatherEntries(config);
   if (!entries.length) {
     showToast({
@@ -383,8 +345,6 @@ export function initExportDialog(): void {
 
   dom.exportCustomFrom?.addEventListener("change", () => void updatePreview());
   dom.exportCustomTo?.addEventListener("change", () => void updatePreview());
-  dom.exportIncludeMic?.addEventListener("change", () => void updatePreview());
-  dom.exportIncludeSystem?.addEventListener("change", () => void updatePreview());
   dom.exportDialogFormat?.addEventListener("change", () => void updatePreview());
   dom.exportDialogRun?.addEventListener("click", () => {
     void executeExport();

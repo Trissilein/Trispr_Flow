@@ -20,13 +20,8 @@ scripts\windows\FIRST_RUN.bat
 
 What it does:
 - runs `npm install`
-- tries to copy runtime files from an existing installed app:
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\cuda`
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\vulkan`
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\quantize.exe`
-  - `%LOCALAPPDATA%\Programs\Trispr Flow\bin\ffmpeg\ffmpeg.exe`
-- falls nötig zusätzlich aus älteren Layouts unter `resources\bin\...`
-- prints runtime readiness summary for transcription, quantization, and FFmpeg
+- fetches the pinned whisper runtime (CUDA + Vulkan) via `scripts/fetch-whisper-runtime.mjs` (download, SHA-256 check, unpack into `src-tauri/bin`)
+- prints runtime readiness summary for transcription and quantization
 
 Optional flags:
 - `scripts\windows\FIRST_RUN.bat -SkipNpmInstall`
@@ -39,14 +34,14 @@ If no runtime is found, the script prints actionable instructions and continues 
 
 - The installer workflow lives at `.github/workflows/windows-release-installers.yml`.
 - `src-tauri/bin/cuda` and `src-tauri/bin/vulkan` are intentionally ignored and are not available in a clean GitHub checkout.
-- Release CI therefore hydrates Whisper runtime payloads from the latest published installer before building:
+- Release CI therefore fetches the pinned runtime from `src-tauri/runtime-manifests/whisper-runtime-1.9.5.json` (zip URL + SHA-256) before building the `full` installer:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/hydrate-whisper-runtime-from-release.ps1 -SkipTag vX.Y.Z
+node scripts/fetch-whisper-runtime.mjs --variants cuda,vulkan
 ```
 
-- The hydration script downloads a published installer asset, runs a silent install into a temp directory, copies `bin/cuda`, `bin/vulkan`, and `bin/quantize.exe` back into `src-tauri/bin`, and terminates the installer if NSIS stays alive after the payload has materialized.
-- Tag builds skip the current tag and rehydrate from the previous published release, so `vX.Y.Z` can bootstrap itself from the last stable installer set.
+- The script downloads each zip, verifies its SHA-256, unpacks only the manifest-listed files into `src-tauri/bin/{cuda,vulkan}` and checks every file by length + SHA-256. `--verify-only` skips the download. Unit tests: `npm run test:scripts`.
+- The workflow builds both variants (`mini`, `full`) on a `v*` tag without manual inputs; see [INSTALLER_VARIANTS.md](INSTALLER_VARIANTS.md).
 
 ## Release publishing
 

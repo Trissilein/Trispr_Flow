@@ -3,7 +3,7 @@
 ::
 ::  What it does (silently):
 ::    1. Bumps the patch version in package.json / tauri.conf.json / Cargo.toml
-::    2. Builds all installer variants (vulkan · cuda-lite · cuda-complete)
+::    2. Builds the installers (mini, full)
 ::    3. Commits the version bump and creates a git tag
 ::    4. Pushes commits + tag to remote
 ::    5. Creates a GitHub release and uploads the installers
@@ -15,7 +15,7 @@ setlocal EnableDelayedExpansion
 
 :: ── Configuration ─────────────────────────────────────────────────────────
 set REPO=Trissilein/Trispr_Flow
-set VARIANTS=vulkan cuda-lite cuda-complete
+set VARIANTS=mini full
 set SCRIPT_DIR=%~dp0
 set LOG=%SCRIPT_DIR%release-build.log
 

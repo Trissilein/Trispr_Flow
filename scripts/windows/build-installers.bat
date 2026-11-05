@@ -2,12 +2,15 @@
 setlocal enabledelayedexpansion
 
 REM ========================================
-REM Trispr Flow - Multi-Variant Installer Builder
+REM Trispr Flow - Installer Builder
 REM ========================================
-REM Variants:
-REM   - vulkan       (no CUDA runtime payload)
-REM   - cuda-lite    (CUDA without cublasLt64_13.dll, Vulkan included)
-REM   - cuda-complete(CUDA + cublasLt64_13.dll, Vulkan included)
+REM Variants (default: mini full):
+REM   mini - app + quantize only; the setup wizard downloads the speech engine and models on first start
+REM   full - app + quantize + bundled whisper runtimes (bin\cuda + bin\vulkan, fetched from the pinned manifest)
+REM Output: installers\TrsprFlw.v<version>.<variant>.exe
+REM Env:
+REM   CARGO_TARGET_DIR                    honored when looking for the built NSIS bundle
+REM   TRISPR_SKIP_INSTALL_VALIDATION=1    skip the silent test install of each built installer
 
 for %%I in ("%~dp0..\..") do set "ROOT=%%~fI"
 pushd "%ROOT%" >nul 2>&1
@@ -17,62 +20,57 @@ if not "!ERRORLEVEL!"=="0" (
 )
 
 set "VARIANTS=%*"
-if "%VARIANTS%"=="" set "VARIANTS=vulkan cuda-lite cuda-complete"
+if "%VARIANTS%"=="" set "VARIANTS=mini full"
+
+set "TARGET_DIR=src-tauri\target"
+if defined CARGO_TARGET_DIR set "TARGET_DIR=%CARGO_TARGET_DIR%"
 
 echo.
 echo ========================================
-echo Trispr Flow - Multi-Variant Builder
+echo Trispr Flow - Installer Builder
 echo ========================================
 echo.
 echo Variants: %VARIANTS%
 echo.
 
-echo [1/7] Detecting version...
+echo [1/5] Detecting version...
 for /f "tokens=2 delims=:, " %%a in ('findstr /C:"\"version\"" package.json') do (
     set VERSION_RAW=%%a
 )
 set "VERSION=%VERSION_RAW:"=%"
-for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format dd.MM."') do set "BUILDDATE=%%i"
-for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format HH.mm"') do set "BUILDTIME=%%i"
-set "BUILDSTAMP=%BUILDDATE%-%BUILDTIME%"
 echo Found version: %VERSION%
-echo Build stamp: %BUILDSTAMP%
 echo.
 
-echo [2/7] Preparing output directories...
+echo [2/5] Preparing output directories...
 if not exist "installers" mkdir "installers"
-if exist "src-tauri\target\release\bundle\nsis" (
-    rmdir /s /q "src-tauri\target\release\bundle\nsis" 2>nul
+if exist "%TARGET_DIR%\release\bundle\nsis" (
+    rmdir /s /q "%TARGET_DIR%\release\bundle\nsis" 2>nul
 )
 echo   OK: Output directories ready
 echo.
 
-echo [3/7] Building frontend...
+echo [3/5] Building frontend...
 call npm run build
 if not "!ERRORLEVEL!"=="0" goto :fail
 echo   OK: Frontend build successful
 echo.
 
-echo [4/6] Building variants...
+echo [4/5] Building variants...
 for %%V in (%VARIANTS%) do (
     call :build_variant %%V
     if not "!ERRORLEVEL!"=="0" goto :fail
 )
 echo.
 
-echo [5/6] Build summary...
-for %%V in (%BUILT_INSTALLERS%) do (
-    if exist "%%~fV" (
-        for %%A in ("%%~fV") do (
-            set SIZE=%%~zA
-            set /a SIZE_MB=!SIZE! / 1048576
-            echo   %%~nxA ^(!SIZE_MB! MB^)
-        )
+echo [5/5] Build summary...
+for %%V in (%VARIANTS%) do (
+    for %%A in ("installers\TrsprFlw.v%VERSION%.%%V.exe") do (
+        set SIZE=%%~zA
+        set /a SIZE_MB=!SIZE! / 1048576
+        echo   %%~nxA ^(!SIZE_MB! MB^)
     )
 )
 echo.
-
-echo [6/6] Completed
 echo ========================================
 echo Output directory:
 echo   %CD%\installers\
@@ -84,47 +82,29 @@ endlocal
 exit /b 0
 
 :build_variant
-set "RAW_VARIANT=%~1"
-set "VARIANT=%RAW_VARIANT%"
-if /i "%VARIANT%"=="vulkan-only" set "VARIANT=vulkan"
-if /i "%VARIANT%"=="unified" set "VARIANT=cuda-complete"
-
-if /i not "%VARIANT%"=="vulkan" if /i not "%VARIANT%"=="cuda-lite" if /i not "%VARIANT%"=="cuda-complete" (
-    echo ERROR: Unknown variant '%RAW_VARIANT%'. Allowed: vulkan, cuda-lite, cuda-complete
+set "VARIANT=%~1"
+if /i not "%VARIANT%"=="mini" if /i not "%VARIANT%"=="full" (
+    echo ERROR: Unknown variant '%~1'. Allowed: mini, full
     exit /b 1
 )
 
 set "CFG=src-tauri\tauri.conf.variant.%VARIANT%.json"
-set "VULKAN_MANIFEST=src-tauri\runtime-manifests\vulkan-v0.8.4-hotfix.json"
 echo   - variant=%VARIANT%
 
+if /i "%VARIANT%"=="full" (
+    node scripts\fetch-whisper-runtime.mjs --variants cuda,vulkan
+    if not "!ERRORLEVEL!"=="0" (
+        echo ERROR: Whisper runtime fetch/validation failed.
+        exit /b 1
+    )
+)
+
+REM Writes the variant tauri config and src-tauri\nsis\variant-define.nsh (read by hooks.nsh).
 node scripts\generate-tauri-variant-config.mjs --variant %VARIANT% --out %CFG%
 if not "!ERRORLEVEL!"=="0" (
     echo ERROR: Failed to generate Tauri config for variant %VARIANT%.
     exit /b 1
 )
-
-node scripts\validate-whisper-runtime.mjs --variant %VARIANT%
-if not "!ERRORLEVEL!"=="0" (
-    echo ERROR: Whisper runtime validation failed for variant %VARIANT%.
-    del /q "%CFG%" >nul 2>&1
-    exit /b 1
-)
-
-if /i "%VARIANT%"=="vulkan" (
-    node scripts\validate-runtime-manifest.mjs --manifest "!VULKAN_MANIFEST!" --root "src-tauri\bin\vulkan" --label "repo-vulkan"
-    if not "!ERRORLEVEL!"=="0" (
-        echo ERROR: Vulkan runtime manifest validation failed for variant %VARIANT%.
-        del /q "%CFG%" >nul 2>&1
-        exit /b 1
-    )
-)
-
-REM --- Inject compile-time variant define for hooks.nsh ---
-REM Use setlocal scope to temporarily disable delayed expansion for echo with !
-setlocal disabledelayedexpansion
-echo !define TRISPR_VARIANT "%VARIANT%" > "src-tauri\nsis\variant-define.nsh"
-setlocal enabledelayedexpansion
 
 set "BASE_CFG=src-tauri\tauri.conf.json"
 set "BASE_BAK=src-tauri\tauri.conf.base.bak.json"
@@ -155,29 +135,21 @@ if not "!BUILD_RESULT!"=="0" (
     exit /b 1
 )
 
-set "SOURCE=src-tauri\target\release\bundle\nsis\Trispr Flow_%VERSION%_x64-setup.exe"
+set "SOURCE=%TARGET_DIR%\release\bundle\nsis\Trispr Flow_%VERSION%_x64-setup.exe"
 if not exist "%SOURCE%" (
     echo ERROR: Installer not found after variant build: %SOURCE%
     exit /b 1
 )
 
-set "LABEL=%VARIANT%"
-if /i "%VARIANT%"=="vulkan" set "LABEL=vulkan-only"
-set "TARGET_NAME=TrsprFlw.v%VERSION%.!LABEL!-%BUILDSTAMP%.exe"
-if exist "installers\!TARGET_NAME!" (
-    set /a SUFFIX=!RANDOM! %% 100
-    if !SUFFIX! lss 10 set "SUFFIX=0!SUFFIX!"
-    set "TARGET_NAME=TrsprFlw.v%VERSION%.!LABEL!-%BUILDSTAMP%-!SUFFIX!.exe"
-)
-
-move "%SOURCE%" "installers\!TARGET_NAME!" >nul
+set "TARGET_NAME=TrsprFlw.v%VERSION%.%VARIANT%.exe"
+move /y "%SOURCE%" "installers\!TARGET_NAME!" >nul
 if not "!ERRORLEVEL!"=="0" (
     echo ERROR: Failed to move variant installer: !TARGET_NAME!
     exit /b 1
 )
 
-if /i "%VARIANT%"=="vulkan" (
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\windows\validate-installed-installer.ps1" -InstallerPath "installers\!TARGET_NAME!" -ManifestPath "!VULKAN_MANIFEST!"
+if not defined TRISPR_SKIP_INSTALL_VALIDATION (
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\windows\validate-installed-installer.ps1" -InstallerPath "installers\!TARGET_NAME!" -Variant %VARIANT%
     if not "!ERRORLEVEL!"=="0" (
         echo ERROR: Installed installer validation failed for !TARGET_NAME!.
         exit /b 1
@@ -185,7 +157,6 @@ if /i "%VARIANT%"=="vulkan" (
 )
 
 echo     OK -^> installers\!TARGET_NAME!
-set "BUILT_INSTALLERS=!BUILT_INSTALLERS! installers\!TARGET_NAME!"
 exit /b 0
 
 :fail

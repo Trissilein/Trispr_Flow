@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
+    "test:scripts": "node --test scripts/fetch-whisper-runtime.test.mjs",
     "audit:rust": "node scripts/run-rust-audit.mjs",
     "test:smoke": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml --lib && cargo test --manifest-path src-tauri/Cargo.toml --bins",
     "qa:release": "node scripts/release-qa.mjs",

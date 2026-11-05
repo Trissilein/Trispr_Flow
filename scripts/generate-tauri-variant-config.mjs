@@ -27,18 +27,19 @@ function parseArgs(argv) {
 const { variant, outPath } = parseArgs(process.argv.slice(2));
 if (!variant || !outPath) {
   console.error(
-    "[generate-tauri-variant-config] Usage: node scripts/generate-tauri-variant-config.mjs --variant <vulkan|cuda-lite|cuda-complete|ci> --out <path>",
+    "[generate-tauri-variant-config] Usage: node scripts/generate-tauri-variant-config.mjs --variant <mini|full|ci> --out <path>",
   );
   process.exit(2);
 }
 
-const allowed = new Set(["vulkan", "vulkan-only", "cuda-lite", "cuda-complete", "ci"]);
+// mini: app + quantize only (setup wizard downloads the speech engine). full: bundles bin/cuda + bin/vulkan.
+// ci: no runtime payload at all (cargo check/test on runners without the DLLs).
+const allowed = new Set(["mini", "full", "ci"]);
 if (!allowed.has(variant)) {
   console.error(`[generate-tauri-variant-config] Unknown variant '${variant}'.`);
   process.exit(2);
 }
 
-const normalizedVariant = variant === "vulkan-only" ? "vulkan" : variant;
 const config = JSON.parse(fs.readFileSync(baseConfigPath, "utf8"));
 const resources = config?.bundle?.resources;
 if (!resources || typeof resources !== "object" || Array.isArray(resources)) {
@@ -48,16 +49,8 @@ if (!resources || typeof resources !== "object" || Array.isArray(resources)) {
 
 const filteredResources = {};
 for (const [key, value] of Object.entries(resources)) {
-  if (
-    normalizedVariant === "ci" &&
-    (key.startsWith("bin/cuda/") || key.startsWith("bin/vulkan/"))
-  ) {
-    continue;
-  }
-  if (normalizedVariant === "vulkan" && key.startsWith("bin/cuda/")) {
-    continue;
-  }
-  if (normalizedVariant === "cuda-lite" && key === "bin/cuda/cublasLt64_13.dll") {
+  const isRuntime = key.startsWith("bin/cuda/") || key.startsWith("bin/vulkan/");
+  if (isRuntime && variant !== "full") {
     continue;
   }
   filteredResources[key] = value;
@@ -70,5 +63,14 @@ fs.mkdirSync(path.dirname(absoluteOutPath), { recursive: true });
 fs.writeFileSync(absoluteOutPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
 console.log(
-  `[generate-tauri-variant-config] Wrote ${path.relative(repoRoot, absoluteOutPath)} (variant=${normalizedVariant}).`,
+  `[generate-tauri-variant-config] Wrote ${path.relative(repoRoot, absoluteOutPath)} (variant=${variant}).`,
 );
+
+// Compile-time variant define consumed by src-tauri/nsis/hooks.nsh (gitignored, regenerated per build).
+if (variant !== "ci") {
+  fs.writeFileSync(
+    path.join(repoRoot, "src-tauri", "nsis", "variant-define.nsh"),
+    `!define TRISPR_VARIANT "${variant}"\n`,
+    "utf8",
+  );
+}

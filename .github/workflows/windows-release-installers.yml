@@ -3,46 +3,19 @@ name: Windows Release Installers
 permissions:
   contents: write
 
+# Tag push `v*` builds both installers (mini + full) and attaches them to the matching release.
+# The whisper runtimes for `full` come from the pinned manifest
+# (src-tauri/runtime-manifests/whisper-runtime-*.json): URL + SHA-256, verified before use.
+# workflow_dispatch (no inputs) is a dry run: it builds and uploads the workflow artifact only.
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      variants:
-        description: "Space-separated variant list (vulkan cuda-lite cuda-complete)"
-        required: false
-        default: "vulkan"
-      vulkan_runtime_zip_url:
-        description: "Trusted Vulkan runtime ZIP URL (required when building vulkan)"
-        required: false
-        default: ""
-      vulkan_runtime_zip_sha256:
-        description: "SHA256 for trusted Vulkan runtime ZIP (required when building vulkan)"
-        required: false
-        default: ""
-      upload_to_release:
-        description: "Upload installers to GitHub Release (requires tag ref)"
-        required: false
-        default: true
-        type: boolean
-      runtime_seed_tag:
-        description: "Override runtime-seed release tag (leave empty to use the default fallback)"
-        required: false
-        default: ""
 
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      VARIANTS: ${{ github.event_name == 'workflow_dispatch' && inputs.variants || 'vulkan' }}
-      VULKAN_RUNTIME_ZIP_URL: ${{ inputs.vulkan_runtime_zip_url }}
-      VULKAN_RUNTIME_ZIP_SHA256: ${{ inputs.vulkan_runtime_zip_sha256 }}
-      # Runtime-seed release used to bootstrap the FIRST build of a new runtime
-      # version, when no published installer carries the matching DLLs yet. The
-      # hydration script only falls back to this when the normal installer
-      # hydration cannot supply the required runtime (e.g. CUDA 12 -> CUDA 13).
-      RUNTIME_SEED_TAG: ${{ (github.event_name == 'workflow_dispatch' && inputs.runtime_seed_tag) || 'runtime-seed-cuda13' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,54 +29,26 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne $env:REF_NAME) {
+            throw "Tag $env:REF_NAME does not match package.json version v$version."
+          }
+
       - name: Install NPM dependencies
         run: npm ci
 
-      - name: Hydrate trusted runtime payloads
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $variants = @($env:VARIANTS -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-          $needsVulkan = $variants | Where-Object { $_ -in @('vulkan', 'vulkan-only') }
-          $needsCuda = $variants | Where-Object { $_ -in @('cuda-lite', 'cuda-complete') }
-          if ($needsVulkan) {
-            if ([string]::IsNullOrWhiteSpace($env:VULKAN_RUNTIME_ZIP_URL) -or [string]::IsNullOrWhiteSpace($env:VULKAN_RUNTIME_ZIP_SHA256)) {
-              throw 'Vulkan release builds require explicit vulkan_runtime_zip_url and vulkan_runtime_zip_sha256. Refusing to hydrate Vulkan from a previous published installer.'
-            }
-            .\scripts\windows\hydrate-vulkan-runtime-from-archive.ps1 -ArchiveUrl $env:VULKAN_RUNTIME_ZIP_URL -ExpectedArchiveSha256 $env:VULKAN_RUNTIME_ZIP_SHA256
-          }
-          if ($needsCuda) {
-            .\scripts\hydrate-whisper-runtime-from-release.ps1 -SkipTag '${{ github.ref_name }}'
-          }
+      - name: Fetch pinned whisper runtimes (CUDA + Vulkan)
+        run: node scripts/fetch-whisper-runtime.mjs --variants cuda,vulkan
 
-      - name: Validate hydrated runtime
-        shell: pwsh
-        run: |
-          $variants = @($env:VARIANTS -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-          foreach ($variant in $variants) {
-            node scripts/validate-whisper-runtime.mjs --variant $variant
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            if ($variant -in @('vulkan', 'vulkan-only')) {
-              node scripts/validate-runtime-manifest.mjs --manifest src-tauri/runtime-manifests/vulkan-v0.8.4-hotfix.json --root src-tauri/bin/vulkan --label repo-vulkan
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            }
-          }
-
-      - name: Build installer variants
+      - name: Build installers (mini + full)
         shell: cmd
-        run: scripts\windows\build-installers.bat %VARIANTS%
-
-      - name: Validate built Vulkan installers
-        shell: pwsh
-        run: |
-          $vulkanInstallers = @(Get-ChildItem -Path installers -Filter '*vulkan-only*.exe' -File -ErrorAction SilentlyContinue)
-          if ($env:VARIANTS -match '(^|\s)(vulkan|vulkan-only)(\s|$)' -and $vulkanInstallers.Count -eq 0) {
-            throw 'Expected at least one Vulkan installer, but none were produced.'
-          }
-          foreach ($installer in $vulkanInstallers) {
-            .\scripts\windows\validate-installed-installer.ps1 -InstallerPath $installer.FullName -ManifestPath src-tauri/runtime-manifests/vulkan-v0.8.4-hotfix.json
-          }
+        run: scripts\windows\build-installers.bat mini full
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -113,7 +58,8 @@ jobs:
           if-no-files-found: error
 
       - name: Upload to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.upload_to_release)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: installers/*.exe
+          fail_on_unmatched_files: true

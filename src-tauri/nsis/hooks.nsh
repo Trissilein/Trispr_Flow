@@ -438,6 +438,7 @@ FunctionEnd
     WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\cuda\whisper-cli.exe" "GpuPreference=2;"
     WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\cuda\whisper-server.exe" "GpuPreference=2;"
     WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\vulkan\whisper-cli.exe" "GpuPreference=2;"
+    WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\vulkan\whisper-server.exe" "GpuPreference=2;"
   ${EndIf}
 
   ; ----------------------------------------------------------------

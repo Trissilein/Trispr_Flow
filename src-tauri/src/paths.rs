@@ -120,6 +120,25 @@ fn normalize_backend_preference(preference: Option<&str>) -> &'static str {
     }
 }
 
+/// Where the in-app downloaded whisper runtime lives: `<base>\runtime\{cuda,vulkan}`
+/// (`%LOCALAPPDATA%\Trispr Flow\runtime`). `TRISPR_WHISPER_RUNTIME_DIR` redirects the root for
+/// tests and dev runs; `TRISPR_DATA_DIR` moves it along with all other app data.
+pub(crate) fn whisper_runtime_root() -> PathBuf {
+    if let Ok(dir) = std::env::var("TRISPR_WHISPER_RUNTIME_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    if let Ok(dir) = std::env::var("TRISPR_DATA_DIR") {
+        return PathBuf::from(dir).join("runtime");
+    }
+    match std::env::var("LOCALAPPDATA") {
+        Ok(local) => PathBuf::from(local).join("Trispr Flow").join("runtime"),
+        Err(_) => PathBuf::from("runtime"),
+    }
+}
+
 fn preferred_backend_order(preference: Option<&str>) -> [&'static str; 2] {
     match normalize_backend_preference(preference) {
         "vulkan" => ["vulkan", "cuda"],
@@ -156,6 +175,8 @@ pub(crate) fn resolve_whisper_cli_path_for_backend(preference: Option<&str>) -> 
             candidates.push(exe_dir.join(format!("bin/{}/whisper-cli.exe", backend)));
             candidates.push(exe_dir.join(format!("bin/{}/whisper-cli", backend)));
         }
+        // Bundled runtime of this backend first, then the one downloaded by the setup wizard.
+        candidates.push(whisper_runtime_root().join(backend).join("whisper-cli.exe"));
     }
 
     // 3. Flat layout fallback
@@ -209,6 +230,11 @@ pub(crate) fn resolve_whisper_server_path_for_backend(preference: Option<&str>) 
             candidates.push(exe_dir.join(format!("bin/{}/whisper-server.exe", backend)));
             candidates.push(exe_dir.join(format!("bin/{}/whisper-server", backend)));
         }
+        candidates.push(
+            whisper_runtime_root()
+                .join(backend)
+                .join("whisper-server.exe"),
+        );
     }
 
     // 3. Flat layout fallback

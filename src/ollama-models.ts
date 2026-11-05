@@ -2007,6 +2007,24 @@ export async function startOllamaRuntime(): Promise<void> {
   await handleStartRuntime();
 }
 
+/**
+ * Setup wizard: installs and starts the local Ollama runtime, then pulls `model`. Progress shows
+ * in the download popup; failures surface as toasts, nothing is thrown.
+ */
+export async function setupRefinementInBackground(model: string): Promise<void> {
+  await ensureLocalRuntimeReady();
+  if (!runtimeIsHealthy()) {
+    showToast({
+      type: "warning",
+      title: "Refinement setup not finished",
+      message: `Ollama is not ready yet. Open the AI refinement settings and download ${model} once it is running.`,
+      duration: 9000,
+    });
+    return;
+  }
+  await handleOllamaPull(model);
+}
+
 async function handleVerifyRuntime(): Promise<void> {
   await runRuntimeAction("verify", async () => {
     runtimeVerify = await verifyRuntimeCommand();

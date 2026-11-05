@@ -122,7 +122,7 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
             required: true,
             message: "Whisper runtime executable is missing.".to_string(),
             hint: Some(
-                "Reinstall Trispr Flow and ensure the selected CUDA/VULKAN runtime is present."
+                "Restart Trispr Flow to download the speech engine again in the setup wizard, or reinstall Trispr Flow."
                     .to_string(),
             ),
         });

@@ -422,6 +422,111 @@ mod tests {
         assert!(q8_name.contains("-q5_0") || q8_name.contains("-q8_0"));
         assert!(!(plain.contains("-q5_0") || plain.contains("-q8_0")));
     }
+
+    #[cfg(target_os = "windows")]
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "trispr-quantize-test-{}-{}-{}",
+            tag,
+            std::process::id(),
+            crate::util::now_ms()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn quantize_needs_both_ggml_dlls_in_one_folder() {
+        let dir = temp_dir("dlls");
+        assert!(!dir_has_ggml_dlls(&dir));
+        std::fs::write(dir.join("ggml.dll"), b"x").unwrap();
+        assert!(!dir_has_ggml_dlls(&dir));
+        std::fs::write(dir.join("ggml-base.dll"), b"x").unwrap();
+        assert!(dir_has_ggml_dlls(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn quantize_runs_from_the_folder_that_holds_the_ggml_dlls() {
+        let bin = temp_dir("bin"); // quantize.exe only, as in the mini installer
+        let runtime = temp_dir("runtime"); // downloaded speech engine
+        std::fs::write(runtime.join("ggml.dll"), b"x").unwrap();
+        std::fs::write(runtime.join("ggml-base.dll"), b"x").unwrap();
+        let dirs = vec![bin.clone(), runtime.clone()];
+
+        let mut cmd = std::process::Command::new("quantize.exe");
+        apply_quantize_windows_env(&mut cmd, &dirs);
+        assert_eq!(cmd.get_current_dir(), Some(runtime.as_path()));
+        let path = cmd
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .and_then(|(_, value)| value)
+            .expect("PATH set");
+        let first_two: Vec<PathBuf> = std::env::split_paths(path).take(2).collect();
+        assert_eq!(first_two, dirs);
+
+        // Without any ggml folder the command still starts from the first folder.
+        let mut cmd = std::process::Command::new("quantize.exe");
+        apply_quantize_windows_env(&mut cmd, &[bin.clone()]);
+        assert_eq!(cmd.get_current_dir(), Some(bin.as_path()));
+        let _ = std::fs::remove_dir_all(&bin);
+        let _ = std::fs::remove_dir_all(&runtime);
+    }
+
+    /// Mini-installer layout, for real: quantize.exe alone in `bin`, the ggml DLLs only in the
+    /// downloaded runtime folder. Run on demand:
+    /// `TRISPR_LIVE_RUNTIME_DIR=<folder with ggml.dll> TRISPR_LIVE_QUANTIZE_MODEL=<ggml-*.bin>
+    ///  cargo test --lib live_quantize_mini -- --ignored --nocapture`
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore]
+    fn live_quantize_mini_layout_uses_the_downloaded_runtime() {
+        let runtime = PathBuf::from(std::env::var("TRISPR_LIVE_RUNTIME_DIR").expect("runtime dir"));
+        let model = PathBuf::from(std::env::var("TRISPR_LIVE_QUANTIZE_MODEL").expect("model"));
+        let bin = temp_dir("live-bin");
+        let quantize = bin.join("quantize.exe");
+        std::fs::copy(
+            std::env::current_dir().unwrap().join("bin/quantize.exe"),
+            &quantize,
+        )
+        .unwrap();
+        assert!(
+            !dir_has_ggml_dlls(&bin),
+            "mini layout has no ggml DLLs next to quantize.exe"
+        );
+        let dirs = vec![bin.clone(), runtime.clone()];
+        assert!(dirs.iter().any(|dir| dir_has_ggml_dlls(dir)));
+
+        let out = bin.join("out-q5_0.bin");
+        let mut cmd = std::process::Command::new(&quantize);
+        apply_quantize_windows_env(&mut cmd, &dirs);
+        let output = cmd
+            .arg(&model)
+            .arg(&out)
+            .arg("q5_0")
+            .output()
+            .expect("quantize.exe could not start");
+        println!("[live] exit: {:?}", output.status.code());
+        println!(
+            "[live] stderr tail: {}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .rev()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" | ")
+        );
+        let (before, after) = (
+            std::fs::metadata(&model).unwrap().len(),
+            std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0),
+        );
+        println!("[live] {} bytes -> {} bytes", before, after);
+        let _ = std::fs::remove_dir_all(&bin);
+        assert!(output.status.success());
+        assert!(after > 0 && after < before);
+    }
 }
 
 fn find_model_in_dir(dir: &PathBuf, spec: &ModelSpec) -> Option<PathBuf> {
@@ -1188,6 +1293,15 @@ pub(crate) fn quantize_model(
         "quantize.exe not found. Install/bundle it or set TRISPR_WHISPER_QUANTIZE.".to_string()
     })?;
 
+    // quantize.exe loads ggml.dll from the speech engine: without one, say so up front
+    // instead of failing with a loader error.
+    #[cfg(target_os = "windows")]
+    let dll_dirs = quantize_dll_dirs(&app);
+    #[cfg(target_os = "windows")]
+    if !dll_dirs.iter().any(|dir| dir_has_ggml_dlls(dir)) {
+        return Err(QUANTIZE_NEEDS_ENGINE.to_string());
+    }
+
     emit_quantize_progress(
         &app,
         &file_name,
@@ -1200,7 +1314,7 @@ pub(crate) fn quantize_model(
     let mut quantize_cmd = std::process::Command::new(quantize_path);
     #[cfg(target_os = "windows")]
     {
-        apply_quantize_windows_env(&mut quantize_cmd, &app);
+        apply_quantize_windows_env(&mut quantize_cmd, &dll_dirs);
     }
     quantize_cmd
         .stdout(Stdio::piped())
@@ -1287,7 +1401,7 @@ pub(crate) fn quantize_model(
             if win_code == 0xC0000135 {
                 return Err(format!(
           "Quantize failed for {} (exit code 0x{win_code:08x}). Missing DLL dependency for quantize.exe. \
-Please reinstall/update Trispr Flow so runtime files in bin/cuda or bin/vulkan are present.",
+Install the speech engine first (setup wizard), or reinstall Trispr Flow so its runtime files are present.",
           quant_type
         ));
             }
@@ -1335,8 +1449,11 @@ fn format_exit_status(status: std::process::ExitStatus) -> String {
     status.to_string()
 }
 
+/// Folders quantize.exe may load `ggml.dll` / `ggml-base.dll` from: its own folder and the
+/// bundled runtime folders first, then the runtime downloaded by the setup wizard (the
+/// `mini` installer ships quantize.exe alone).
 #[cfg(target_os = "windows")]
-fn apply_quantize_windows_env(cmd: &mut std::process::Command, app: &AppHandle) {
+fn quantize_dll_dirs(app: &AppHandle) -> Vec<PathBuf> {
     use std::ffi::OsString;
 
     fn push_dir_if_exists(
@@ -1399,14 +1516,33 @@ fn apply_quantize_windows_env(cmd: &mut std::process::Command, app: &AppHandle) 
         push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, cwd.join("bin/vulkan"));
     }
 
-    let mut merged_paths = dll_dirs.clone();
+    // Runtime downloaded by the setup wizard: after every bundled folder, Vulkan first (no
+    // CUDA libraries next to it).
+    let downloaded_root = crate::paths::whisper_runtime_root();
+    push_dir_if_exists(
+        &mut dll_dirs,
+        &mut seen_dirs,
+        downloaded_root.join("vulkan"),
+    );
+    push_dir_if_exists(&mut dll_dirs, &mut seen_dirs, downloaded_root.join("cuda"));
+    dll_dirs
+}
+
+#[cfg(target_os = "windows")]
+fn dir_has_ggml_dlls(dir: &std::path::Path) -> bool {
+    dir.join("ggml.dll").is_file() && dir.join("ggml-base.dll").is_file()
+}
+
+const QUANTIZE_NEEDS_ENGINE: &str = "Install the speech engine first: quantize needs its ggml DLLs. Finish the setup wizard (restart Trispr Flow to open it again) or reinstall Trispr Flow.";
+
+/// Runs quantize.exe from the folder that holds the ggml DLLs, with every candidate folder in
+/// front of `PATH`.
+#[cfg(target_os = "windows")]
+fn apply_quantize_windows_env(cmd: &mut std::process::Command, dll_dirs: &[PathBuf]) {
+    let mut merged_paths = dll_dirs.to_vec();
     if let Some(existing) = std::env::var_os("PATH") {
         for existing_path in std::env::split_paths(&existing) {
-            if existing_path.as_os_str().is_empty() {
-                continue;
-            }
-            let key = existing_path.as_os_str().to_os_string();
-            if seen_dirs.insert(key) {
+            if !existing_path.as_os_str().is_empty() && !merged_paths.contains(&existing_path) {
                 merged_paths.push(existing_path);
             }
         }
@@ -1416,8 +1552,12 @@ fn apply_quantize_windows_env(cmd: &mut std::process::Command, app: &AppHandle) 
         cmd.env("PATH", joined_path);
     }
 
-    if let Some(first_dir) = dll_dirs.first() {
-        cmd.current_dir(first_dir);
+    if let Some(dir) = dll_dirs
+        .iter()
+        .find(|dir| dir_has_ggml_dlls(dir))
+        .or(dll_dirs.first())
+    {
+        cmd.current_dir(dir);
     }
 }
 

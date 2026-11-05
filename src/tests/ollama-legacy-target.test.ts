@@ -1,6 +1,6 @@
 /**
  * The old default runtime target (0.20.2) was never a user choice. Whatever is stored, installed or
- * on disk, it must read as the recommended runtime: "Install 0.40.13" (or "Switch to 0.40.13" when
+ * on disk, it must read as the recommended runtime: "Install 0.40.14" (or "Switch to 0.40.14" when
  * that folder exists) and never an offer to go back to 0.20.2. Also: what the settings page shows
  * after a re-render, and that it shows server text as text. A target that is older than the running
  * runtime and was not picked in the version list is lifted to the running one; a pick stays.
@@ -167,7 +167,7 @@ beforeEach(() => {
   setStartupStatus({ ollama_ready: true, ollama_starting: false } as StartupStatus);
   runningVersion = "0.30.4";
   targetOnDisk = false;
-  catalog = [entry("0.30.4", { installed: true, installable: false, installable_reason: "Installed locally." }), entry("0.40.13", { source: "pinned", recommended: true, latest: true })];
+  catalog = [entry("0.30.4", { installed: true, installable: false, installable_reason: "Installed locally." }), entry("0.40.14", { source: "pinned", recommended: true, latest: true })];
   mockedInvoke.mockReset();
   mockedInvoke.mockImplementation((async (command: string) => {
     switch (command) {
@@ -181,7 +181,7 @@ beforeEach(() => {
       case "start_ollama_runtime":
         return { pid: 1, endpoint: "http://127.0.0.1:11434", already_running: false, pending_start: false };
       case "download_ollama_runtime":
-        return { sha256_ok: true, archive_path: "a.zip", version: "0.40.13" };
+        return { sha256_ok: true, archive_path: "a.zip", version: "0.40.14" };
       case "fetch_ollama_models_with_size":
         return [];
       default:
@@ -191,28 +191,28 @@ beforeEach(() => {
 });
 
 describe("stored legacy default 0.20.2 with 0.30.4 installed", () => {
-  it("moves to the recommended runtime and offers 'Install 0.40.13', never a downgrade", async () => {
+  it("moves to the recommended runtime and offers 'Install 0.40.14', never a downgrade", async () => {
     setSettings(mkSettings("0.30.4", "0.20.2"));
     await openSettingsPage();
 
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
     expect(listedVersions()).not.toContain("0.20.2");
-    expect(chipsOf("0.40.13")).toContain("Target");
-    expect(buttonsOf("0.40.13")).toEqual(["Install"]);
-    expect(primary().textContent).toBe("Install 0.40.13");
+    expect(chipsOf("0.40.14")).toContain("Target");
+    expect(buttonsOf("0.40.14")).toEqual(["Install"]);
+    expect(primary().textContent).toBe("Install 0.40.14");
     expect(primary().dataset.runtimeAction).toBe("install");
     expect(primary().disabled).toBe(false);
     expect(list().textContent).not.toContain("0.20.2");
   });
 
-  it("says 'Switch to 0.40.13' when that runtime is already on disk (no download, no install)", async () => {
+  it("says 'Switch to 0.40.14' when that runtime is already on disk (no download, no install)", async () => {
     targetOnDisk = true;
-    catalog = [entry("0.30.4", { installed: true, installable: false }), entry("0.40.13", { source: "pinned", recommended: true, installed: true })];
+    catalog = [entry("0.30.4", { installed: true, installable: false }), entry("0.40.14", { source: "pinned", recommended: true, installed: true })];
     setSettings(mkSettings("0.30.4", "0.20.2"));
     await openSettingsPage();
 
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
-    expect(primary().textContent).toBe("Switch to 0.40.13");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
+    expect(primary().textContent).toBe("Switch to 0.40.14");
 
     await models.ensureLocalRuntimeReady();
     expect(callsOf("download_ollama_runtime")).toHaveLength(0);
@@ -227,21 +227,21 @@ describe("stored legacy default 0.20.2 with 0.30.4 installed", () => {
 
     await models.ensureLocalRuntimeReady();
     expect(callsOf("download_ollama_runtime")).toHaveLength(1);
-    expect(callsOf("download_ollama_runtime")[0][1]).toEqual({ version: "0.40.13" });
+    expect(callsOf("download_ollama_runtime")[0][1]).toEqual({ version: "0.40.14" });
   });
 
   it("a legacy target without any installed runtime also becomes the recommended one", async () => {
     setSettings(mkSettings("", "0.20.2"));
     runningVersion = "";
     await openSettingsPage();
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
   });
 
   it("an explicit older choice (picked in the version list) is still honoured", async () => {
     targetOnDisk = true;
-    setSettings(mkSettings("0.40.13", "0.30.4", true));
-    runningVersion = "0.40.13";
-    catalog = [entry("0.30.4", { installed: true, installable: false }), entry("0.40.13", { source: "pinned", recommended: true, installed: true })];
+    setSettings(mkSettings("0.40.14", "0.30.4", true));
+    runningVersion = "0.40.14";
+    catalog = [entry("0.30.4", { installed: true, installable: false }), entry("0.40.14", { source: "pinned", recommended: true, installed: true })];
     await openSettingsPage();
     expect(settings?.providers.ollama.runtime_target_version).toBe("0.30.4");
     expect(chipsOf("0.30.4")).toContain("Target");
@@ -250,25 +250,25 @@ describe("stored legacy default 0.20.2 with 0.30.4 installed", () => {
   });
 
   it("an older target nobody picked is lifted to the running runtime: no downgrade offer", async () => {
-    // The state found on the machine: runtime 0.40.13 running, target left behind at 0.30.4.
-    setSettings(mkSettings("0.40.13", "0.30.4", false));
-    runningVersion = "0.40.13";
-    catalog = [entry("0.30.4", { installed: true, installable: false }), entry("0.40.13", { source: "pinned", recommended: true, installed: true })];
+    // The state found on the machine: runtime 0.40.14 running, target left behind at 0.30.4.
+    setSettings(mkSettings("0.40.14", "0.30.4", false));
+    runningVersion = "0.40.14";
+    catalog = [entry("0.30.4", { installed: true, installable: false }), entry("0.40.14", { source: "pinned", recommended: true, installed: true })];
     await openSettingsPage();
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
     expect(primary().textContent).toBe("Runtime ready");
     expect(chipsOf("0.30.4")).not.toContain("Target");
     expect(buttonsOf("0.30.4")).toEqual(["Switch to", "Delete"]);
   });
 
   it("the primary action never offers the downgrade, and the refresh heals the stored target", async () => {
-    setSettings(mkSettings("0.40.13", "0.30.4", false));
-    runningVersion = "0.40.13";
+    setSettings(mkSettings("0.40.14", "0.30.4", false));
+    runningVersion = "0.40.14";
     // Before anything read the runtime or healed the settings: no detect result yet.
     expect(models.getOllamaRuntimeCardState().primaryLabel).not.toBe("Switch to 0.30.4");
     await models.refreshOllamaRuntimeState({ force: true });
     expect(models.getOllamaRuntimeCardState().primaryLabel).toBe("Runtime ready");
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
   });
 });
 
@@ -276,16 +276,16 @@ describe("the settings page after changes", () => {
   it("keeps the target through re-renders and a changed catalog", async () => {
     setSettings(mkSettings("0.30.4", "0.30.4"));
     await openSettingsPage();
-    settings!.providers.ollama.runtime_target_version = "0.40.13";
+    settings!.providers.ollama.runtime_target_version = "0.40.14";
     renderAIFallbackSettingsUi();
-    expect(chipsOf("0.40.13")).toContain("Target");
+    expect(chipsOf("0.40.14")).toContain("Target");
 
-    catalog = [entry("0.40.13", { source: "pinned", recommended: true }), entry("0.40.9"), entry("0.30.4", { installed: true, installable: false })];
+    catalog = [entry("0.40.14", { source: "pinned", recommended: true }), entry("0.40.9"), entry("0.30.4", { installed: true, installable: false })];
     await models.refreshOllamaRuntimeVersionCatalog(true);
     renderAIFallbackSettingsUi();
     renderAIFallbackSettingsUi();
-    expect(chipsOf("0.40.13")).toContain("Target");
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
+    expect(chipsOf("0.40.14")).toContain("Target");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
   });
 
   it("does not offer 'Switch to X' for a version just picked that is not on disk (the last detect was about another target)", async () => {
@@ -294,9 +294,9 @@ describe("the settings page after changes", () => {
     await openSettingsPage();
     expect(primary().textContent).toBe("Runtime ready");
 
-    settings!.providers.ollama.runtime_target_version = "0.40.13"; // what a pick in the list stores
+    settings!.providers.ollama.runtime_target_version = "0.40.14"; // what a pick in the list stores
     renderAIFallbackSettingsUi();
-    expect(primary().textContent).toBe("Install 0.40.13");
+    expect(primary().textContent).toBe("Install 0.40.14");
   });
 
   it("renders hostile catalog text as text in the list", async () => {

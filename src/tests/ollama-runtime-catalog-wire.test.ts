@@ -161,7 +161,7 @@ beforeEach(() => {
 
 describe("runtime version list actions", () => {
   it("runs the runtime flow for the version and action of the clicked row", async () => {
-    setSettings(withRuntime("0.30.4", "0.40.13"));
+    setSettings(withRuntime("0.30.4", "0.40.14"));
 
     clickListAction("0.40.7", "install");
     await vi.waitFor(() => expect(vi.mocked(runRuntimeVersionAction)).toHaveBeenCalledTimes(1));
@@ -194,7 +194,7 @@ describe("runtime target normalisation", () => {
   });
 
   it("keeps an older pick as well", async () => {
-    setSettings(withRuntime("0.40.13", "0.35.1", true));
+    setSettings(withRuntime("0.40.14", "0.35.1", true));
 
     dom.aiFallbackLocalPrimaryAction!.click();
     await vi.waitFor(() => expect(mockedInvoke.mock.calls.length).toBeGreaterThan(0));
@@ -204,12 +204,12 @@ describe("runtime target normalisation", () => {
   });
 
   it("lifts an older target nobody picked to the installed runtime (never a downgrade offer)", async () => {
-    setSettings(withRuntime("0.40.13", "0.30.4", false));
+    setSettings(withRuntime("0.40.14", "0.30.4", false));
 
     dom.aiFallbackLocalPrimaryAction!.click();
     await vi.waitFor(() => expect(mockedInvoke.mock.calls.length).toBeGreaterThan(0));
 
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
   });
 
   it("moves a stored legacy default (0.20.2) to the recommended target instead of folding it into the installed one", async () => {
@@ -218,7 +218,7 @@ describe("runtime target normalisation", () => {
     dom.aiFallbackLocalPrimaryAction!.click();
     await vi.waitFor(() => expect(mockedInvoke.mock.calls.length).toBeGreaterThan(0));
 
-    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.13");
+    expect(settings?.providers.ollama.runtime_target_version).toBe("0.40.14");
     expect(settings?.providers.ollama.runtime_version).toBe("0.30.4");
   });
 });

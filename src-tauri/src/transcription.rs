@@ -24,7 +24,7 @@ static LAST_TRANSCRIPTION_ACCELERATOR: AtomicU8 = AtomicU8::new(TRANSCRIPTION_AC
 static LAST_TRANSCRIPTION_TIMING: OnceLock<Mutex<TranscriptionTimingSummary>> = OnceLock::new();
 static CUDA_BACKEND_UNSTABLE: AtomicBool = AtomicBool::new(false);
 static VULKAN_BACKEND_UNSTABLE: AtomicBool = AtomicBool::new(false);
-const CUDA_RUNTIME_REQUIRED_FILES: &[&str] = &[
+pub(crate) const CUDA_RUNTIME_REQUIRED_FILES: &[&str] = &[
     "whisper-cli.exe",
     "whisper.dll",
     "ggml.dll",
@@ -35,7 +35,7 @@ const CUDA_RUNTIME_REQUIRED_FILES: &[&str] = &[
     "cublasLt64_13.dll",
     "cudart64_13.dll",
 ];
-const VULKAN_RUNTIME_REQUIRED_FILES: &[&str] = &[
+pub(crate) const VULKAN_RUNTIME_REQUIRED_FILES: &[&str] = &[
     "whisper-cli.exe",
     "whisper.dll",
     "ggml.dll",
@@ -653,7 +653,7 @@ fn whisper_cli_help_text(cli_path: &Path) -> Option<String> {
 
 fn whisper_runtime_missing_message(detail: &str) -> String {
     format!(
-        "Whisper runtime is missing or incomplete ({}). Reinstall Trispr Flow and ensure whisper-cli exists in the installed runtime (bin\\\\cuda or bin\\\\vulkan).",
+        "Whisper runtime is missing or incomplete ({}). Restart Trispr Flow to download the speech engine again in the setup wizard, or reinstall Trispr Flow.",
         detail
     )
 }

@@ -1389,14 +1389,42 @@
       <div id="onboarding-wizard-backdrop" class="auth-modal-backdrop"></div>
       <div class="auth-modal-card onboarding-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
         <div class="auth-modal-header">
-          <h3 id="wizard-title" class="ai-refine-section-title">Willkommen bei Trispr Flow</h3>
-          <div class="wizard-progress">Schritt <span id="wizard-step-current">1</span> von 3</div>
+          <h3 id="wizard-title" class="ai-refine-section-title">Welcome to Trispr Flow</h3>
+          <div class="wizard-progress">Step <span id="wizard-step-current">1</span> of <span id="wizard-step-total">3</span></div>
         </div>
 
-        <!-- Step 1: Model Setup -->
-        <div id="wizard-step-1" class="wizard-step">
-          <h4>Sprachmodell einrichten</h4>
-          <p class="wizard-text">Trispr Flow nutzt ein lokales KI-Modell für die Transkription. Es wird einmalig heruntergeladen und danach vollständig offline genutzt.</p>
+        <!-- Step: speech engine (skipped when a runtime is bundled or already downloaded) -->
+        <div id="wizard-step-runtime" class="wizard-step" hidden>
+          <h4>Set up the speech engine</h4>
+          <p class="wizard-text">Trispr Flow transcribes with whisper.cpp on your own PC. The engine for your graphics card is downloaded once and checked against a fixed fingerprint; after that everything runs offline.</p>
+          <p id="wizard-gpu-line" class="field-hint">Detecting your graphics card...</p>
+
+          <div class="wizard-model-options">
+            <label class="wizard-card" id="wizard-card-engine-cuda">
+              <input type="radio" name="wizard-engine" value="cuda" />
+              <strong>NVIDIA CUDA</strong>
+              <span class="field-hint"><span id="wizard-engine-size-cuda">~486 MB</span> — fastest on GeForce RTX and GTX 16 series or newer.</span>
+            </label>
+            <label class="wizard-card" id="wizard-card-engine-vulkan">
+              <input type="radio" name="wizard-engine" value="vulkan" checked />
+              <strong>Vulkan</strong>
+              <span class="field-hint"><span id="wizard-engine-size-vulkan">~15 MB</span> — runs on NVIDIA, AMD and Intel graphics.</span>
+            </label>
+          </div>
+
+          <div class="wizard-model-download">
+            <button id="wizard-runtime-btn" type="button" class="btn btn-primary">Download speech engine</button>
+            <div id="wizard-runtime-progress" class="wizard-progress-box" hidden>
+              <div class="wizard-progress-track"><div id="wizard-runtime-progress-bar" class="wizard-progress-fill"></div></div>
+            </div>
+            <span id="wizard-runtime-status" class="field-hint wizard-status" role="status"></span>
+          </div>
+        </div>
+
+        <!-- Step: speech model -->
+        <div id="wizard-step-model" class="wizard-step" hidden>
+          <h4>Download the speech model</h4>
+          <p class="wizard-text">The speech model turns your voice into text. It is downloaded once and then runs fully offline. You can continue with the next steps while it downloads.</p>
 
           <div class="wizard-model-options">
             <label class="wizard-card">
@@ -1406,59 +1434,69 @@
             </label>
           </div>
 
-          <div class="wizard-model-download" style="margin-top: 20px;">
-            <button id="wizard-download-model-btn" type="button" class="btn btn-primary">Modell herunterladen</button>
-            <div id="wizard-download-progress" style="margin-top: 10px; display: none;">
-              <div class="progress-bar" style="height: 8px; background: #eee; border-radius: 4px; overflow: hidden;">
-                <div id="wizard-download-progress-bar" style="height: 100%; background: #4be0d4; width: 0%; transition: width 0.3s;"></div>
-              </div>
-              <span id="wizard-download-status" class="field-hint" style="margin-top: 8px; display: block;">Wird heruntergeladen...</span>
+          <div class="wizard-model-download">
+            <button id="wizard-download-model-btn" type="button" class="btn btn-primary">Download model</button>
+            <div id="wizard-download-progress" class="wizard-progress-box" hidden>
+              <div class="wizard-progress-track"><div id="wizard-download-progress-bar" class="wizard-progress-fill"></div></div>
             </div>
+            <span id="wizard-download-status" class="field-hint wizard-status" role="status"></span>
           </div>
         </div>
 
-        <!-- Step 2: Recording Mode (formerly Step 1) -->
-        <div id="wizard-step-2" class="wizard-step" hidden>
-          <p class="wizard-text">Offline-Diktiertool — alles bleibt auf deinem Rechner.</p>
-          <h4>Wie willst du aufnehmen?</h4>
+        <!-- Step: recording mode -->
+        <div id="wizard-step-mode" class="wizard-step" hidden>
+          <p class="wizard-text">Offline dictation tool — everything stays on your computer.</p>
+          <h4>How do you want to record?</h4>
           <div class="wizard-mode-selector">
             <label class="wizard-card" id="wizard-card-ptt">
               <input type="radio" name="wizard-mode" value="ptt" checked />
-              <strong>Push-to-Talk</strong>
-              <span class="field-hint">Taste gedrückt halten zum Sprechen</span>
+              <strong>Push-to-talk</strong>
+              <span class="field-hint">Hold a key while you speak</span>
             </label>
             <label class="wizard-card" id="wizard-card-vad">
               <input type="radio" name="wizard-mode" value="vad" />
-              <strong>Spracherkennung</strong>
-              <span class="field-hint">Automatisch erkennen wenn du sprichst</span>
+              <strong>Voice detection</strong>
+              <span class="field-hint">Start automatically when you speak</span>
             </label>
           </div>
         </div>
 
-        <!-- Step 3: Hotkey + Done (formerly Step 2) -->
-        <div id="wizard-step-3" class="wizard-step" hidden>
-          <h4>Dein Aufnahme-Hotkey</h4>
-          <p class="wizard-text">Halte diese Tastenkombination, um aufzunehmen:</p>
+        <!-- Step: hotkey -->
+        <div id="wizard-step-hotkey" class="wizard-step" hidden>
+          <h4>Your recording hotkey</h4>
+          <p class="wizard-text">Hold this key combination to record:</p>
           <div class="hotkey-setup-box">
             <div class="hotkey-input-group wizard-hotkey-group">
               <input id="wizard-hotkey-input" type="text" value="Ctrl+Shift+Space" readonly />
-              <button id="wizard-setup-hotkey-btn" type="button" class="hotkey-record-btn">🎹 Aufnehmen</button>
+              <button id="wizard-setup-hotkey-btn" type="button" class="hotkey-record-btn">🎹 Record</button>
             </div>
             <span id="wizard-hotkey-status" class="hotkey-status"></span>
           </div>
+        </div>
+
+        <!-- Step: AI refinement (on by default, can be skipped) -->
+        <div id="wizard-step-refinement" class="wizard-step" hidden>
+          <h4>AI refinement</h4>
+          <p class="wizard-text">Refinement polishes your dictation — punctuation, filler words, small slips — with a language model that runs on your PC through Ollama. Nothing leaves your computer.</p>
+          <label class="wizard-check">
+            <input type="checkbox" id="wizard-refinement-check" checked />
+            <span>
+              <strong>Set up AI refinement now</strong>
+              <span class="field-hint">Downloads Ollama and the gemma4:e4b model (about 8 GB) in the background. Untick to skip; you can turn it on later in the settings.</span>
+            </span>
+          </label>
           <div class="wizard-finish-section">
-            <p class="wizard-text">Alles andere kannst du jederzeit in den Einstellungen anpassen.</p>
-            <p class="field-hint">Tipp: Aktiviere den <strong>Expert-Modus</strong> oben rechts fuer erweiterte Einstellungen wie KI-Verfeinerung und Sprachausgabe.</p>
+            <p class="wizard-text">You can change everything else at any time in the settings.</p>
+            <p class="field-hint">Tip: turn on <strong>Expert mode</strong> (top right) for advanced settings.</p>
           </div>
         </div>
 
-        <!-- Legacy wizard steps removed (hardware detection, ollama, finish) -->
-        <!-- Hardware detection runs automatically in background -->
+        <div id="wizard-downloads" class="field-hint wizard-downloads" role="status" hidden></div>
 
         <div class="auth-modal-actions wizard-actions">
-          <button id="wizard-prev-btn" type="button" class="hotkey-record-btn" disabled>Zurueck</button>
-          <button id="wizard-next-btn" type="button" class="btn btn-primary">Weiter</button>
-          <button id="wizard-finish-btn" type="button" class="btn btn-primary" hidden>Los geht's!</button>
+          <button id="wizard-prev-btn" type="button" class="hotkey-record-btn" disabled>Back</button>
+          <button id="wizard-next-btn" type="button" class="btn btn-primary">Next</button>
+          <button id="wizard-finish-btn" type="button" class="btn btn-primary" hidden>Let's go!</button>
         </div>
       </div>
     </div>

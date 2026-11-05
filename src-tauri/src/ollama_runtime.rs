@@ -1373,13 +1373,13 @@ fn copy_with_background_throttle<R: Read, W: Write>(
     Ok(total_written)
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file =
         File::open(path).map_err(|e| format!("Failed to open file for hashing: {}", e))?;
     sha256_reader(&mut file)
 }
 
-fn sha256_reader<R: Read>(reader: &mut R) -> Result<String, String> {
+pub(crate) fn sha256_reader<R: Read>(reader: &mut R) -> Result<String, String> {
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 64];
     let mut processed_since_pause = 0u64;
@@ -2600,17 +2600,17 @@ pub async fn download_ollama_runtime(
 /// Longest silence tolerated on a download connection. The timeout applies to each read, not
 /// to the whole transfer, so a healthy multi-GB download never trips it, while a connection
 /// that went dead (Wi-Fi drop without a reset) ends after a minute instead of hanging.
-const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Names of the operations running right now. The same one never runs twice at once: two
 /// downloads of one version would write the same `.zip.part`, and two installs would race on
 /// the staging and target folders.
 static RUNTIME_JOBS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-struct RuntimeJob(String);
+pub(crate) struct RuntimeJob(String);
 
 impl RuntimeJob {
-    fn begin(key: String, busy_message: String) -> Result<Self, String> {
+    pub(crate) fn begin(key: String, busy_message: String) -> Result<Self, String> {
         let mut jobs = RUNTIME_JOBS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -2632,7 +2632,7 @@ impl Drop for RuntimeJob {
 }
 
 /// The disk (or quota) is full: `ERROR_DISK_FULL` / `ERROR_HANDLE_DISK_FULL` on Windows.
-fn is_disk_full(error: &std::io::Error) -> bool {
+pub(crate) fn is_disk_full(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
         std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded
@@ -2651,7 +2651,7 @@ fn describe_write_error(what: &str, error: &std::io::Error) -> String {
     }
 }
 
-fn describe_download_error(error: &ureq::Error) -> String {
+pub(crate) fn describe_download_error(error: &ureq::Error) -> String {
     match error {
         ureq::Error::Status(code, _) => format!(
             "the download server answered HTTP {} (the release file may have been removed)",
@@ -2665,7 +2665,11 @@ fn describe_download_error(error: &ureq::Error) -> String {
 }
 
 /// Why the body of a download stopped coming.
-fn describe_stream_error(error: &std::io::Error, downloaded: u64, total: Option<u64>) -> String {
+pub(crate) fn describe_stream_error(
+    error: &std::io::Error,
+    downloaded: u64,
+    total: Option<u64>,
+) -> String {
     match error.kind() {
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => format!(
             "The download stalled (no data for {} s) after {} bytes. Check the connection and try again.",
@@ -2684,7 +2688,7 @@ fn describe_stream_error(error: &std::io::Error, downloaded: u64, total: Option<
     }
 }
 
-enum StreamError {
+pub(crate) enum StreamError {
     Read(std::io::Error),
     Write(std::io::Error),
     TooLarge,
@@ -2692,7 +2696,7 @@ enum StreamError {
 
 /// Copies `reader` to `writer`, at most `max_bytes`, throttled like all background IO.
 /// `on_chunk` gets the running total. Returns the bytes copied.
-fn stream_download<R: Read, W: Write>(
+pub(crate) fn stream_download<R: Read, W: Write>(
     reader: &mut R,
     writer: &mut W,
     max_bytes: u64,
@@ -2992,17 +2996,17 @@ fn cleanup_stale_runtime_dirs_older_than(runtime_root: &Path, max_age: Duration)
 
 /// Removes a file or directory on drop unless disarmed, so a failed install or an aborted
 /// download never leaves a multi-GB leftover behind.
-struct RemoveOnDrop {
+pub(crate) struct RemoveOnDrop {
     path: PathBuf,
     armed: bool,
 }
 
 impl RemoveOnDrop {
-    fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         Self { path, armed: true }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         self.armed = false;
     }
 }
@@ -3023,7 +3027,7 @@ impl Drop for RemoveOnDrop {
 /// Opens the archive so nothing else can write to, rename or delete it while the handle is
 /// held. Hash and unpack must use this one handle, otherwise the file could be swapped
 /// between "checksum verified" and "extracted".
-fn open_archive_locked(path: &Path) -> std::io::Result<File> {
+pub(crate) fn open_archive_locked(path: &Path) -> std::io::Result<File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(target_os = "windows")]
@@ -3115,7 +3119,7 @@ fn extract_runtime_zip<R: Read + Seek>(
 /// opening a mapped image for writing (sharing violation, os error 32). So a write-open that
 /// writes, truncates and creates nothing is a reliable, harmless "is it running?" probe.
 /// (Measured against a real 0.30.4 server: renaming and replacing its folder succeeded.)
-fn executable_in_use(binary: &Path) -> bool {
+pub(crate) fn executable_in_use(binary: &Path) -> bool {
     #[cfg(target_os = "windows")]
     const SHARING_VIOLATION: i32 = 32;
     #[cfg(not(target_os = "windows"))]
@@ -3441,7 +3445,7 @@ fn verify_authenticode_signer(_binary: &Path) -> Result<SignatureVerdict, String
 /// Unique per call and strictly increasing (milliseconds scaled by 1000, bumped past the last
 /// stamp handed out): names the staging and backup folders of one install.
 /// `recover_interrupted_swaps` reads it back as "newest".
-fn unique_install_stamp() -> u64 {
+pub(crate) fn unique_install_stamp() -> u64 {
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let wanted = crate::util::now_ms().saturating_mul(1000);
     let mut previous = LAST.load(std::sync::atomic::Ordering::Relaxed);

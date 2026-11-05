@@ -22,6 +22,7 @@ mod state;
 mod transcription;
 mod uiautomation_capture;
 mod util;
+mod whisper_runtime;
 mod whisper_server;
 
 use arboard::{Clipboard, ImageData};
@@ -3124,6 +3125,10 @@ pub fn run() {
             list_ollama_runtime_versions,
             fetch_ollama_online_versions,
             ollama_runtime::delete_ollama_runtime_version,
+            whisper_runtime::get_whisper_runtime_status,
+            whisper_runtime::download_whisper_runtime,
+            whisper_runtime::detect_recommended_runtime,
+            whisper_runtime::verify_whisper_runtime,
             download_ollama_runtime,
             install_ollama_runtime,
             start_ollama_runtime,

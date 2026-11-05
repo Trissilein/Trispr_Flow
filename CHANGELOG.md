@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-app speech engine download**: the whisper.cpp v1.9.5 runtime (CUDA ~486 MB or Vulkan ~15 MB) can be downloaded by the setup wizard into `%LOCALAPPDATA%\Trispr Flow\runtime\{cuda,vulkan}` (`TRISPR_WHISPER_RUNTIME_DIR` redirects it for tests). The pin (URL, ZIP SHA-256, size and SHA-256 of every file) is compiled in from `runtime-manifests/whisper-runtime-1.9.5.json`; downloads are limited to the project release URL, unpacked only as the listed files (no zip-slip, size and hash checked per file) into a staging folder and swapped in atomically, so a cancelled or failed download leaves nothing behind and keeps an earlier install. New commands: `get_whisper_runtime_status`, `download_whisper_runtime`, `detect_recommended_runtime` (NVIDIA Turing or newer -> CUDA, anything else -> Vulkan), `verify_whisper_runtime` (starts `whisper-cli`, and for CUDA asks `cudart` for a device: old driver or no GPU -> the wizard loads Vulkan and keeps the backend on Vulkan). Bundled `bin/{cuda,vulkan}` still win over a downloaded runtime of the same backend.
+- **Setup wizard** (English): new first step "Speech engine" (skipped when a runtime is bundled or already downloaded) with detected GPU, recommended engine, progress, retry and self-test; the model download keeps running while the mode and hotkey steps go on; new last step "AI refinement" with Ollama + `gemma4:e4b` ticked by default (untick to skip). A finished wizard reopens with only the engine step when the speech engine has disappeared.
+
+### Fixed
+
+- **Setup wizard was never shown** (its `hidden` attribute was never lifted since `showWizard()` was removed); it now opens on a first run, but not for anyone who already has a model and a speech engine.
+- **Quantize in the `mini` layout**: `quantize.exe` now finds `ggml.dll` / `ggml-base.dll` in the downloaded runtime folder (runs from it, folder first in `PATH`); without any ggml DLLs the error is "Install the speech engine first".
+
 ### Changed
 
 - **Managed Ollama runtime pin** moves from 0.40.13 to 0.40.14 (new compiled-in SHA-256 from the official GitHub release; other versions still resolve from GitHub).

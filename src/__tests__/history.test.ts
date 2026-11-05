@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "../types";
 import {
   buildExportText,
@@ -7,13 +7,6 @@ import {
   setTopicKeywords,
   type ExportFormat,
 } from "../history";
-import { setHistory } from "../state";
-
-describe("history helpers", () => {
-  afterEach(() => {
-    setHistory([]);
-  });
-});
 
 describe("topic scoring", () => {
   it("ranks topics by hit count and computes share percentages", () => {

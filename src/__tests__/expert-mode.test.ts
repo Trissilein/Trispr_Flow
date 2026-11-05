@@ -240,7 +240,6 @@ describe("Block K K5 — Expert Mode Toggle", () => {
     expect(indexHtml).toContain("Does not keep Whisper or Ollama models loaded");
     expect(indexHtml).toContain("Refinement flow");
     expect(indexHtml).toContain("Whisper creates raw text");
-    expect(indexHtml).toMatch(/data-panel="system"[^>]*data-expert-only="true"/);
     expect(indexHtml).toMatch(/data-panel="interface"[^>]*data-expert-only="true"/);
     expect(indexHtml).toMatch(/id="ptt-hot-keepalive"[\s\S]*aria-label="PTT audio standby window"/);
 
@@ -269,7 +268,6 @@ describe("Block K K5 — Expert Mode Toggle", () => {
       "ptt-use-vad-toggle",
       "ptt-hot-keepalive",
       "vad-block",
-      "opus-archive-toggle",
       "continuous-mic-hard-cut",
       "model-source-select",
       "overlay-style",

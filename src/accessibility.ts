@@ -38,24 +38,6 @@ export function updateRecordingStatus(state: RecordingState): void {
   }
 }
 
-export function updateTranscribeStatus(state: RecordingState): void {
-  const statusDot = document.getElementById("transcribe-dot");
-  if (statusDot) {
-    statusDot.setAttribute("aria-label", `Transcribing status: ${state}`);
-  }
-
-  const announcement = document.getElementById("transcribe-announcement");
-  if (announcement) {
-    const announcements: Record<RecordingState, string> = {
-      disabled: "Transcription disabled.",
-      idle: "Transcription idle.",
-      recording: "Output monitoring active.",
-      transcribing: "Transcription in progress."
-    };
-    announcement.textContent = announcements[state];
-  }
-}
-
 export function updateRefiningStatus(state: RefinementState): void {
   const statusDot = document.getElementById("refining-dot");
   if (statusDot) {

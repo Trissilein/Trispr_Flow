@@ -212,26 +212,6 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::modules::registry;
-
-    #[test]
-    fn dependency_preflight_ignores_stale_disabled_optional_module_error() {
-        let mut settings = Settings::default();
-        registry::set_last_error(
-            &mut settings.module_settings,
-            "opus",
-            "Module is in error state.",
-        );
-
-        let items = build_module_dependency_preflight_items(&settings);
-
-        assert!(items.iter().all(|item| item.id != "module_opus"));
-    }
-}
-
 pub(crate) fn run_dependency_preflight(app: &AppHandle) {
     let state = app.state::<AppState>();
     let report = build_dependency_preflight_report(state.inner());

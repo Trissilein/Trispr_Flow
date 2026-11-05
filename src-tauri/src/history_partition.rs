@@ -294,13 +294,6 @@ impl PartitionedHistory {
             Err(_) => Vec::new(),
         }
     }
-
-    /// Wrapper around `VecDeque::retain` for the active partition (needed by
-    /// cluster-flush logic in `transcription.rs`).
-    #[cfg(target_os = "windows")]
-    pub(crate) fn retain_active<F: FnMut(&HistoryEntry) -> bool>(&mut self, f: F) {
-        self.active.retain(f);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -353,51 +346,21 @@ pub(crate) fn get_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
 }
 
 #[tauri::command]
-pub(crate) fn get_transcribe_history(state: State<'_, AppState>) -> Vec<HistoryEntry> {
-    state
-        .history_transcribe
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .active
-        .iter()
-        .cloned()
-        .collect()
-}
-
-#[tauri::command]
 pub(crate) fn clear_active_transcript_history(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<u64, String> {
-    let mic_deleted = {
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let deleted = history.active.len() as u64;
-        history.active.clear();
-        history.flush_to_disk()?;
-        let updated: Vec<_> = history.active.iter().cloned().collect();
-        drop(history);
-        let _ = app.emit("history:updated", updated);
-        deleted
-    };
-
-    let system_deleted = {
-        let mut history = state
-            .history_transcribe
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let deleted = history.active.len() as u64;
-        history.active.clear();
-        history.flush_to_disk()?;
-        let updated: Vec<_> = history.active.iter().cloned().collect();
-        drop(history);
-        let _ = app.emit("transcribe:history-updated", updated);
-        deleted
-    };
-
-    Ok(mic_deleted + system_deleted)
+    let mut history = state
+        .history
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let deleted = history.active.len() as u64;
+    history.active.clear();
+    history.flush_to_disk()?;
+    let updated: Vec<_> = history.active.iter().cloned().collect();
+    drop(history);
+    let _ = app.emit("history:updated", updated);
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -411,41 +374,20 @@ pub(crate) fn delete_active_transcript_entry(
         return Ok(0);
     }
 
-    let mic_deleted = {
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let before = history.active.len();
-        history.active.retain(|entry| entry.id != entry_id);
-        let deleted = before.saturating_sub(history.active.len()) as u64;
-        if deleted > 0 {
-            history.flush_to_disk()?;
-            let updated: Vec<_> = history.active.iter().cloned().collect();
-            drop(history);
-            let _ = app.emit("history:updated", updated);
-        }
-        deleted
-    };
-
-    let system_deleted = {
-        let mut history = state
-            .history_transcribe
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let before = history.active.len();
-        history.active.retain(|entry| entry.id != entry_id);
-        let deleted = before.saturating_sub(history.active.len()) as u64;
-        if deleted > 0 {
-            history.flush_to_disk()?;
-            let updated: Vec<_> = history.active.iter().cloned().collect();
-            drop(history);
-            let _ = app.emit("transcribe:history-updated", updated);
-        }
-        deleted
-    };
-
-    Ok(mic_deleted + system_deleted)
+    let mut history = state
+        .history
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let before = history.active.len();
+    history.active.retain(|entry| entry.id != entry_id);
+    let deleted = before.saturating_sub(history.active.len()) as u64;
+    if deleted > 0 {
+        history.flush_to_disk()?;
+        let updated: Vec<_> = history.active.iter().cloned().collect();
+        drop(history);
+        let _ = app.emit("history:updated", updated);
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -457,11 +399,6 @@ pub(crate) fn list_history_partitions(
     match kind.as_str() {
         "mic" => Ok(state
             .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .list_partitions()),
-        "system" => Ok(state
-            .history_transcribe
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .list_partitions()),
@@ -480,11 +417,6 @@ pub(crate) fn load_history_partition(
     match kind.as_str() {
         "mic" => Ok(state
             .history
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .load_partition(&pk)),
-        "system" => Ok(state
-            .history_transcribe
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .load_partition(&pk)),

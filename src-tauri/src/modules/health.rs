@@ -157,17 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn enabled_not_installed_optional_module_needs_setup() {
-        let mut settings = ModuleSettings::default();
-        settings.enabled_modules.insert("opus".to_string());
-
-        let health = health_for("opus", &settings);
-
-        assert_eq!(health.state, "needs_setup");
-        assert!(health.detail.contains("assets"));
-    }
-
-    #[test]
     fn core_error_is_release_blocker() {
         let settings = ModuleSettings::default();
         let descriptor = ModuleDescriptor {

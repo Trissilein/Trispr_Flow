@@ -350,7 +350,7 @@ function renderLatestInspector(): void {
 
   updateStatusBadge(snapshot.status);
 
-  const sourceLabel = snapshot.source === "output" ? "System audio" : snapshot.source;
+  const sourceLabel = snapshot.source;
   const modelPart = snapshot.model ? ` • ${snapshot.model}` : "";
   const timePart =
     typeof snapshot.executionTimeMs === "number" ? ` • ${snapshot.executionTimeMs} ms` : "";

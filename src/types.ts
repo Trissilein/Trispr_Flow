@@ -1,7 +1,7 @@
 // Type definitions for Trispr Flow application
 
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
-export type ModuleId = "ai_refinement" | "opus";
+export type ModuleId = "ai_refinement";
 export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
 export type ModulePermission = string;
 export type RefinementPromptPreset =
@@ -118,19 +118,9 @@ export interface Settings {
   vad_threshold_start: number;
   vad_threshold_sustain: number;
   vad_silence_ms: number;
-  transcribe_enabled: boolean;
-  transcribe_hotkey: string;
   hotkey_toggle_activation_words: string;
-  transcribe_output_device: string;
-  transcribe_vad_mode: boolean;
-  transcribe_vad_threshold: number;
-  transcribe_vad_silence_ms: number;
-  transcribe_batch_interval_ms: number;
-  transcribe_chunk_overlap_ms: number;
-  transcribe_input_gain_db: number;
   mic_input_gain_db: number;
   history_alias_mic: string;
-  history_alias_system: string;
   capture_enabled: boolean;
   model_source: "default" | "custom";
   model_custom_url: string;
@@ -190,10 +180,6 @@ export interface Settings {
   postproc_llm_model: string;
   postproc_llm_prompt: string;
   // Recording export settings
-  opus_enabled?: boolean;
-  opus_bitrate_kbps?: number;
-  auto_save_system_audio?: boolean;
-  auto_save_mic_audio?: boolean;
   continuous_dump_enabled?: boolean;
   continuous_dump_profile?: "balanced" | "low_latency" | "high_quality";
   continuous_soft_flush_ms?: number;
@@ -207,10 +193,6 @@ export interface Settings {
   continuous_mic_soft_flush_ms?: number;
   continuous_mic_silence_flush_ms?: number;
   continuous_mic_hard_cut_ms?: number;
-  continuous_system_override_enabled?: boolean;
-  continuous_system_soft_flush_ms?: number;
-  continuous_system_silence_flush_ms?: number;
-  continuous_system_hard_cut_ms?: number;
   transcribe_backend?: "whisper_cpp";
   local_backend_preference?: "auto" | "cuda" | "vulkan";
   // Window state fields from backend
@@ -434,7 +416,6 @@ export interface TranscriptionGpuActivityEvent {
 }
 
 export type RecordingState = "disabled" | "idle" | "recording" | "transcribing";
-export type HistoryTab = "mic" | "system" | "conversation";
 
 // Ollama model pull events
 export interface OllamaPullProgress {

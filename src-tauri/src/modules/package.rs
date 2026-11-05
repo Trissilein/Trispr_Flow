@@ -458,7 +458,7 @@ mod tests {
             package_dir.join(MODULE_MANIFEST_FILE),
             r#"{
   "schema_version": 1,
-  "id": "opus",
+  "id": "ai_refinement",
   "name": "Opus Runtime",
   "version": "0.1.0",
   "kind": "runtime",
@@ -481,7 +481,7 @@ mod tests {
         let package_dir = write_valid_package("valid");
         let package = scan_package_dir(&package_dir).expect("valid package");
 
-        assert_eq!(package.manifest.id, "opus");
+        assert_eq!(package.manifest.id, "ai_refinement");
         assert_eq!(package.manifest.kind, "runtime");
         assert_eq!(package.manifest.required_assets.len(), 1);
         assert_eq!(package.manifest.sub_capabilities.len(), 2);
@@ -495,7 +495,7 @@ mod tests {
         let manifest_path = package_dir.join(MODULE_MANIFEST_FILE);
         let manifest = fs::read_to_string(&manifest_path)
             .expect("read manifest")
-            .replace("\"id\": \"opus\"", "\"id\": \"unknown\"");
+            .replace("\"id\": \"ai_refinement\"", "\"id\": \"unknown\"");
         fs::write(&manifest_path, manifest).expect("write manifest");
 
         let error = scan_package_dir(&package_dir).expect_err("unknown id should fail");
@@ -510,7 +510,7 @@ mod tests {
         let manifest_path = package_dir.join(MODULE_MANIFEST_FILE);
         let manifest = fs::read_to_string(&manifest_path)
             .expect("read manifest")
-            .replace("\"id\": \"opus\"", "\"id\": \"analysis\"");
+            .replace("\"id\": \"ai_refinement\"", "\"id\": \"analysis\"");
         fs::write(&manifest_path, manifest).expect("write manifest");
 
         let error = scan_package_dir(&package_dir).expect_err("removed id should fail");
@@ -569,7 +569,7 @@ mod tests {
         fs::create_dir_all(&modules_dir).expect("create modules dir");
         let valid_package = write_valid_package("scan-valid");
         let invalid_package = write_valid_package("scan-invalid");
-        let valid_target = modules_dir.join("opus");
+        let valid_target = modules_dir.join("ai_refinement");
         let invalid_target = modules_dir.join("broken");
         fs::rename(&valid_package, &valid_target).expect("move valid package");
         fs::rename(&invalid_package, &invalid_target).expect("move invalid package");
@@ -578,7 +578,7 @@ mod tests {
         let report = scan_modules_dir(&modules_dir).expect("scan modules dir");
 
         assert_eq!(report.packages.len(), 1);
-        assert_eq!(report.packages[0].manifest.id, "opus");
+        assert_eq!(report.packages[0].manifest.id, "ai_refinement");
         assert_eq!(report.errors.len(), 1);
         assert!(report.errors[0].error.contains("missing file"));
         let _ = fs::remove_dir_all(modules_dir);
@@ -598,7 +598,7 @@ mod tests {
             format!(
                 r#"{{
   "schema_version": 1,
-  "id": "opus",
+  "id": "ai_refinement",
   "name": "Opus Runtime",
   "version": "0.1.0",
   "kind": "runtime"{entrypoint_line}
@@ -634,12 +634,12 @@ mod tests {
         let result = install_package_from_dir(&source_dir, &modules_dir).expect("install package");
 
         assert!(result.installed);
-        assert_eq!(result.module_id, "opus");
+        assert_eq!(result.module_id, "ai_refinement");
         assert!(modules_dir
-            .join("opus")
+            .join("ai_refinement")
             .join(MODULE_MANIFEST_FILE)
             .is_file());
-        assert!(modules_dir.join("opus").join("bin/data.bin").is_file());
+        assert!(modules_dir.join("ai_refinement").join("bin/data.bin").is_file());
         let _ = fs::remove_dir_all(source_dir);
         let _ = fs::remove_dir_all(modules_dir);
     }
@@ -654,7 +654,7 @@ mod tests {
 
         assert!(first.installed);
         assert!(!second.installed);
-        assert_eq!(second.package.manifest.id, "opus");
+        assert_eq!(second.package.manifest.id, "ai_refinement");
         let _ = fs::remove_dir_all(source_dir);
         let _ = fs::remove_dir_all(modules_dir);
     }

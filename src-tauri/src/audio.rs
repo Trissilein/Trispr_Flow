@@ -476,57 +476,6 @@ pub(crate) async fn list_audio_devices() -> Vec<AudioDevice> {
     .unwrap_or_else(|_| vec![])
 }
 
-#[tauri::command]
-pub(crate) async fn list_output_devices() -> Vec<AudioDevice> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut devices = vec![AudioDevice {
-            id: "default".to_string(),
-            label: "System Default Output".to_string(),
-        }];
-
-        #[cfg(target_os = "windows")]
-        {
-            if let Ok(enumerator) = wasapi::DeviceEnumerator::new() {
-                if let Ok(collection) = enumerator.get_device_collection(&wasapi::Direction::Render)
-                {
-                    if let Ok(count) = collection.get_nbr_devices() {
-                        for index in 0..count {
-                            if let Ok(device) = collection.get_device_at_index(index) {
-                                let name = device
-                                    .get_friendlyname()
-                                    .unwrap_or_else(|_| format!("Output {}", index + 1));
-                                let id = device.get_id().unwrap_or_else(|_| format!("idx-{index}"));
-                                devices.push(AudioDevice {
-                                    id: format!("wasapi:{id}"),
-                                    label: name,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let host = cpal::default_host();
-            if let Ok(outputs) = host.output_devices() {
-                for (index, device) in outputs.enumerate() {
-                    let name = device
-                        .name()
-                        .unwrap_or_else(|_| format!("Output {}", index + 1));
-                    let id = format!("output-{}-{}", index, name);
-                    devices.push(AudioDevice { id, label: name });
-                }
-            }
-        }
-
-        devices
-    })
-    .await
-    .unwrap_or_else(|_| vec![])
-}
-
 fn resolve_input_device(device_id: &str) -> Option<cpal::Device> {
     let host = cpal::default_host();
     if device_id == "default" {
@@ -1358,7 +1307,7 @@ fn handle_transcription_ok(
     );
 
     if text.trim().is_empty()
-        || should_drop_transcript(text, level, duration_ms, false)
+        || should_drop_transcript(text, level, duration_ms)
         || crate::transcription::should_drop_by_activation_words(
             text,
             &settings.activation_words,
@@ -2439,21 +2388,6 @@ pub(crate) fn end_refinement_activity(app_handle: &AppHandle, model: &str) {
     }
 }
 
-fn flush_mic_audio_to_session(buffer: &mut Vec<i16>) {
-    if buffer.is_empty() {
-        return;
-    }
-    let duration_ms = buffer.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
-    if duration_ms < 10_000 {
-        buffer.clear();
-        return;
-    }
-    if let Err(err) = crate::session_manager::flush_chunk(buffer, "mic") {
-        error!("Failed to flush mic chunk: {}", err);
-    }
-    buffer.clear();
-}
-
 fn process_toggle_segment(
     app_handle: &AppHandle,
     runtime_settings: &Settings,
@@ -2581,16 +2515,6 @@ fn run_toggle_processor(
     let mut last_settings_check = Instant::now();
     let mut runtime_settings = initial_settings;
 
-    let auto_save = runtime_settings.auto_save_mic_audio && runtime_settings.opus_enabled;
-    let mut save_buffer: Vec<i16> = Vec::new();
-    let flush_threshold = TARGET_SAMPLE_RATE as usize * 60;
-
-    if auto_save {
-        let recordings_dir = crate::paths::resolve_recordings_dir(&app_handle);
-        let modules_dir = crate::paths::resolve_modules_dir(&app_handle);
-        crate::session_manager::init(recordings_dir, modules_dir);
-    }
-
     loop {
         match stop_rx.try_recv() {
             Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
@@ -2621,13 +2545,6 @@ fn run_toggle_processor(
         let level = rms_i16(&samples);
         let segments = segmenter.push_samples(&samples, level);
         for mut segment in segments {
-            if auto_save {
-                save_buffer.extend_from_slice(&segment.samples);
-                if save_buffer.len() >= flush_threshold {
-                    flush_mic_audio_to_session(&mut save_buffer);
-                }
-            }
-
             if segment.samples.len() < min_samples {
                 continue;
             }
@@ -2656,9 +2573,6 @@ fn run_toggle_processor(
     };
     if !leftover.is_empty() {
         for mut segment in segmenter.push_samples(&leftover, 0.0) {
-            if auto_save {
-                save_buffer.extend_from_slice(&segment.samples);
-            }
             let chunk = std::mem::take(&mut segment.samples);
             if chunk.len() < min_samples {
                 continue;
@@ -2674,9 +2588,6 @@ fn run_toggle_processor(
         }
     }
     for mut segment in segmenter.finalize() {
-        if auto_save {
-            save_buffer.extend_from_slice(&segment.samples);
-        }
         let chunk = std::mem::take(&mut segment.samples);
         if chunk.len() < min_samples {
             continue;
@@ -2689,13 +2600,6 @@ fn run_toggle_processor(
             segment.rms,
             segment.duration_ms,
         );
-    }
-
-    if auto_save {
-        flush_mic_audio_to_session(&mut save_buffer);
-        if let Err(err) = crate::session_manager::finalize_for("mic") {
-            error!("Failed to finalize mic audio session: {}", err);
-        }
     }
 }
 
@@ -3309,12 +3213,6 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
         let level = rms_i16(&samples);
         let duration_ms = samples.len() as u64 * 1000 / TARGET_SAMPLE_RATE as u64;
 
-        // Save recording as OPUS for optional later processing/export.
-        // Only save if duration > 10 seconds (avoid short dictations)
-        if duration_ms >= 10_000 {
-            let _ = crate::save_recording_opus(&app_handle, &samples, "mic", None);
-        }
-
         let mut recorder = state
             .recorder
             .lock()
@@ -3342,47 +3240,6 @@ pub(crate) fn stop_recording_async(app: AppHandle, state: &State<'_, AppState>) 
             }
         }
     });
-}
-
-fn get_recordings_directory(app: AppHandle) -> Result<String, String> {
-    let data_dir = crate::paths::resolve_base_dir(&app);
-    let recordings_dir = data_dir.join("recordings");
-
-    std::fs::create_dir_all(&recordings_dir)
-        .map_err(|e| format!("Failed to create recordings dir: {}", e))?;
-
-    Ok(recordings_dir.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub(crate) fn open_recordings_directory(app: AppHandle) -> Result<(), String> {
-    let recordings_dir = get_recordings_directory(app.clone())?;
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&recordings_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&recordings_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&recordings_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open directory: {}", e))?;
-    }
-
-    Ok(())
 }
 
 pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {

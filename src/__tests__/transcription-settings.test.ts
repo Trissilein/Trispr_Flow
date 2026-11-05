@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
     document.body.innerHTML = `
     <input id="capture-enabled-toggle" type="checkbox" />
-    <input id="transcribe-enabled-toggle" type="checkbox" />
     <select id="mode-select"><option value="ptt">ptt</option><option value="vad">vad</option></select>
     <input id="ptt-hotkey" />
     <input id="toggle-hotkey" />
@@ -34,40 +33,18 @@ vi.hoisted(() => {
     <input id="vad-threshold" type="range" min="-60" max="0" />
     <span id="vad-threshold-value"></span>
     <span id="vad-silence-value"></span>
-    <input id="transcribe-hotkey" />
     <input id="toggle-activation-words-hotkey" />
-    <select id="transcribe-device-select">
       <option value="default" selected>default</option>
       <option value="loopback-1">loopback-1</option>
     </select>
-    <input id="transcribe-vad-toggle" type="checkbox" />
-    <input id="transcribe-vad-threshold" type="range" min="-60" max="0" />
-    <span id="transcribe-vad-threshold-value"></span>
-    <input id="transcribe-vad-silence" type="range" />
-    <span id="transcribe-vad-silence-value"></span>
-    <span id="transcribe-threshold-db"></span>
-    <div id="transcribe-meter-threshold"></div>
-    <div id="transcribe-threshold-label"></div>
-    <input id="transcribe-batch-interval" type="range" min="1000" max="10000" />
-    <span id="transcribe-batch-value"></span>
-    <input id="transcribe-chunk-overlap" type="range" min="0" max="5000" />
-    <span id="transcribe-overlap-value"></span>
-    <input id="transcribe-gain" type="range" />
-    <span id="transcribe-gain-value"></span>
-    <div id="transcribe-batch-field"></div>
-    <div id="transcribe-overlap-field"></div>
-    <div id="transcribe-vad-threshold-field"></div>
-    <div id="transcribe-vad-silence-field"></div>
   `;
 });
 
 import {
     renderTranscriptionSettings,
     syncCaptureModeVisibility,
-    updateTranscribeThreshold,
-    updateTranscribeVadVisibility,
 } from "../settings/transcription.settings";
-import { setSettings, settings } from "../state";
+import { setSettings } from "../state";
 import type { Settings } from "../types";
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -75,7 +52,6 @@ const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
     return {
         capture_enabled: true,
-        transcribe_enabled: true,
         mode: "ptt",
         hotkey_ptt: "CommandOrControl+Shift+Space",
         hotkey_toggle: "CommandOrControl+Shift+T",
@@ -94,47 +70,13 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
         mic_input_gain_db: 4,
         vad_threshold_start: 0.5,
         vad_silence_ms: 1200,
-        transcribe_hotkey: "CommandOrControl+Shift+Enter",
         hotkey_toggle_activation_words: "CommandOrControl+Shift+A",
-        transcribe_output_device: "loopback-1",
-        transcribe_vad_mode: true,
-        transcribe_vad_threshold: 0.6,
-        transcribe_vad_silence_ms: 950,
-        transcribe_batch_interval_ms: 4000,
-        transcribe_chunk_overlap_ms: 1200,
-        transcribe_input_gain_db: 2,
         ...overrides,
     } as unknown as Settings;
 }
 
 beforeEach(() => {
     setSettings(makeSettings());
-});
-
-describe("updateTranscribeVadVisibility", () => {
-    it("shows threshold meter and label when enabled", () => {
-        updateTranscribeVadVisibility(true);
-        expect(byId<HTMLDivElement>("transcribe-meter-threshold").style.display).toBe("block");
-        expect(byId<HTMLDivElement>("transcribe-threshold-label").style.display).toBe("block");
-    });
-
-    it("hides threshold meter and label when disabled", () => {
-        updateTranscribeVadVisibility(false);
-        expect(byId<HTMLDivElement>("transcribe-meter-threshold").style.display).toBe("none");
-        expect(byId<HTMLDivElement>("transcribe-threshold-label").style.display).toBe("none");
-    });
-});
-
-describe("updateTranscribeThreshold", () => {
-    it("renders threshold db text", () => {
-        updateTranscribeThreshold(0.5);
-        expect(byId<HTMLElement>("transcribe-threshold-db").textContent).toBe("-6.0 dB");
-    });
-
-    it("updates threshold marker position", () => {
-        updateTranscribeThreshold(1.0);
-        expect(byId<HTMLDivElement>("transcribe-meter-threshold").style.left).toBe("100%");
-    });
 });
 
 describe("syncCaptureModeVisibility", () => {
@@ -169,22 +111,6 @@ describe("renderTranscriptionSettings", () => {
         expect(byId<HTMLSelectElement>("language-select").value).toBe("en");
         expect(byId<HTMLInputElement>("ptt-hotkey").value).toContain("CommandOrControl");
         expect(byId<HTMLInputElement>("toggle-hotkey").value).toContain("CommandOrControl");
-    });
-
-    it("renders transcribe VAD and timing controls", () => {
-        renderTranscriptionSettings();
-        expect(byId<HTMLInputElement>("transcribe-vad-toggle").checked).toBe(true);
-        expect(byId<HTMLInputElement>("transcribe-vad-threshold").value).toBe("-4");
-        expect(byId<HTMLElement>("transcribe-vad-threshold-value").textContent).toBe("-4 dB");
-        expect(byId<HTMLInputElement>("transcribe-batch-interval").value).toBe("4000");
-        expect(byId<HTMLElement>("transcribe-batch-value").textContent).toBe("4s");
-    });
-
-    it("syncs missing transcribe output device back to default", () => {
-        setSettings(makeSettings({ transcribe_output_device: "missing-device" }));
-        renderTranscriptionSettings();
-        expect(settings?.transcribe_output_device).toBe(byId<HTMLSelectElement>("transcribe-device-select").value);
-        expect(byId<HTMLInputElement>("transcribe-vad-toggle").checked).toBe(true);
     });
 
     it("is a no-op when settings is null", () => {

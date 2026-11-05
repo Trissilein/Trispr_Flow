@@ -105,7 +105,7 @@ export function initHotkeyStatusListener(): void {
 }
 
 export function setupHotkeyRecorder(
-  type: "ptt" | "toggle" | "transcribe" | "toggleActivationWords",
+  type: "ptt" | "toggle" | "toggleActivationWords",
   input: HTMLInputElement | null,
   recordBtn: HTMLButtonElement | null,
   statusEl: HTMLSpanElement | null
@@ -220,8 +220,6 @@ export function setupHotkeyRecorder(
         settings.hotkey_ptt = hotkeyString;
       } else if (type === "toggle") {
         settings.hotkey_toggle = hotkeyString;
-      } else if (type === "transcribe") {
-        settings.transcribe_hotkey = hotkeyString;
       } else if (type === "toggleActivationWords") {
         settings.hotkey_toggle_activation_words = hotkeyString;
       }

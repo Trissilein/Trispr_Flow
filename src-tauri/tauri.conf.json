@@ -56,8 +56,7 @@
       "bin/vulkan/ggml-base.dll": "bin/vulkan/ggml-base.dll",
       "bin/vulkan/ggml-cpu.dll": "bin/vulkan/ggml-cpu.dll",
       "bin/vulkan/ggml-vulkan.dll": "bin/vulkan/ggml-vulkan.dll",
-      "bin/quantize.exe": "bin/quantize.exe",
-      "bin/ffmpeg/ffmpeg.exe": "bin/ffmpeg/ffmpeg.exe"
+      "bin/quantize.exe": "bin/quantize.exe"
     },
     "windows": {
       "nsis": {

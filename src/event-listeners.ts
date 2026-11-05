@@ -5,8 +5,6 @@ import {
   ensureContinuousDumpDefaults,
   ensureDiagnosticsDefaults,
 } from "./settings";
-import { persistSettings } from "./settings-persist";
-import { syncHistoryAliasesIntoSettings } from "./history-preferences";
 import { wireHistory } from "./wiring/history.wire";
 import { wireOverlay } from "./wiring/overlay.wire";
 import { wireTranscription } from "./wiring/transcription.wire";
@@ -23,9 +21,6 @@ export function wireEvents() {
   ensureContinuousDumpDefaults();
   ensureCaptureRuntimeDefaults();
   ensureDiagnosticsDefaults();
-  if (syncHistoryAliasesIntoSettings()) {
-    void persistSettings();
-  }
 
   // Transcription + Whisper Backend (R2 slice 4).
   wireTranscription();

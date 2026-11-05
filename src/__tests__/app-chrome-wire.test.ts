@@ -84,7 +84,6 @@ function mountDom(): void {
     </div>
     <button class="panel-collapse-btn" data-panel-collapse="invalid-panel"></button>
 
-    <button id="open-recordings-btn"></button>
     <button id="open-modules-btn"></button>
 
     <input id="accent-color" type="color" value="#00ff00" />
@@ -298,13 +297,6 @@ describe("wireAppChrome - panels and shortcuts", () => {
     appChrome.wireAppChrome();
     click("open-modules-btn");
     expect(activeTabId()).toBe("tab-btn-modules");
-  });
-
-  it("open recordings button invokes backend command", async () => {
-    const { appChrome } = await setup();
-    appChrome.wireAppChrome();
-    click("open-recordings-btn");
-    expect(mocks.invoke).toHaveBeenCalledWith("open_recordings_directory");
   });
 
   it("initializes hotkey status listener", async () => {

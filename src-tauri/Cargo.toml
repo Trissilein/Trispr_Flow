@@ -41,7 +41,6 @@ sha2 = "0.10"
 hex = "0.4"
 url = "2"
 regex = "1"
-hound = "3.5"
 chrono = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
@@ -51,7 +50,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 
 [target."cfg(target_os = \"windows\")".dependencies]
-wasapi = "0.22"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 windows = { version = "0.59", features = ["Win32_Graphics_Dxgi", "Win32_System_LibraryLoader", "Win32_UI_Accessibility", "Win32_System_Com", "Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Performance", "Win32_System_Diagnostics_ToolHelp"] }
 

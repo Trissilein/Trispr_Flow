@@ -13,14 +13,12 @@ mod hotkeys;
 mod models;
 mod modules;
 mod ollama_runtime;
-mod opus;
 mod overlay;
 mod paste_arbiter;
 mod paths;
 mod postprocessing;
 mod refinement_adaptation;
 mod runtime_commands;
-mod session_manager;
 mod state;
 mod transcription;
 mod uiautomation_capture;
@@ -49,19 +47,17 @@ static OLLAMA_DIAG_NEXT_MS: AtomicU64 = AtomicU64::new(0);
 use std::os::windows::process::CommandExt;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::menu::{CheckMenuItem, MenuItem};
+use tauri::menu::CheckMenuItem;
 use tauri::Wry;
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tracing::{error, info, warn};
 
-pub(crate) use audio::open_recordings_directory;
 pub(crate) use history_partition::{
     clear_active_transcript_history, delete_active_transcript_entry, get_history,
-    get_transcribe_history, list_history_partitions, load_history_partition, save_transcript,
+    list_history_partitions, load_history_partition, save_transcript,
 };
 pub(crate) use hotkeys::validate_hotkey;
-pub(crate) use session_manager::{clear_crash_recovery, save_crash_recovery};
 pub(crate) use util::{frontend_heartbeat, log_frontend_event};
 
 /// Wrap a Tauri command body in `catch_unwind` so that a panic inside module
@@ -82,7 +78,7 @@ macro_rules! guarded_command {
 }
 
 use crate::ai_fallback::provider::ping_ollama_quick;
-use crate::audio::{list_audio_devices, list_output_devices};
+use crate::audio::list_audio_devices;
 use crate::history_partition::PartitionedHistory;
 use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
@@ -96,10 +92,6 @@ use crate::state::{
     load_settings, normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
     normalize_continuous_dump_fields, normalize_history_alias_fields, save_settings_file,
     sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
-};
-use crate::transcription::{
-    expand_transcribe_backlog as expand_transcribe_backlog_inner, start_transcribe_monitor,
-    stop_transcribe_monitor_and_release_whisper,
 };
 pub(crate) use ai_fallback::commands::{
     check_ollama_model_updates, delete_ollama_model, detect_ollama_runtime,
@@ -121,7 +113,6 @@ const TRAY_CLICK_DEBOUNCE_MS: u64 = 250;
 const TRAY_ICON_ID: &str = "main-tray";
 const TRAY_PULSE_FRAMES: usize = 6;
 const TRAY_PULSE_CYCLE_MS: u64 = 1600;
-const BACKLOG_AUTOEXPAND_TIMEOUT_MS: u64 = 5_000;
 const FRONTEND_HEARTBEAT_STALE_MS: u64 = 15_000;
 const FRONTEND_WATCHDOG_CHECK_MS: u64 = 5_000;
 const FRONTEND_WATCHDOG_COOLDOWN_MS: u64 = 90_000;
@@ -138,10 +129,7 @@ const CLIPBOARD_RESTORE_TIMEOUT_MS: u64 = 3_000;
 
 static LAST_TRAY_CLICK_MS: AtomicU64 = AtomicU64::new(0);
 static TRAY_CAPTURE_STATE: AtomicU8 = AtomicU8::new(0);
-static TRAY_TRANSCRIBE_STATE: AtomicU8 = AtomicU8::new(0);
 static TRAY_PULSE_STARTED: AtomicBool = AtomicBool::new(false);
-static BACKLOG_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
-static BACKLOG_PROMPT_CANCELLED: AtomicBool = AtomicBool::new(false);
 static MAIN_WINDOW_RESTORED: AtomicBool = AtomicBool::new(false);
 static CLIPBOARD_PASTE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LAST_PASTE_TEXT: Mutex<String> = Mutex::new(String::new());
@@ -708,41 +696,6 @@ pub(crate) fn cleanup_managed_processes(app: &AppHandle, state: &AppState) {
     crate::uiautomation_capture::shutdown(&state.enter_capture);
 }
 
-fn cancel_backlog_auto_expand(_app: &AppHandle) {
-    BACKLOG_PROMPT_CANCELLED.store(true, Ordering::Release);
-}
-
-fn schedule_backlog_auto_expand(app: AppHandle, cancel_item: MenuItem<Wry>) {
-    if BACKLOG_PROMPT_ACTIVE.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    BACKLOG_PROMPT_CANCELLED.store(false, Ordering::Release);
-    let _ = cancel_item.set_enabled(true);
-    let _ = cancel_item.set_text(format!(
-        "Cancel Auto-Expand ({}s)",
-        BACKLOG_AUTOEXPAND_TIMEOUT_MS / 1000
-    ));
-
-    crate::util::spawn_guarded("backlog_autoexpand", move || {
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(BACKLOG_AUTOEXPAND_TIMEOUT_MS);
-        while std::time::Instant::now() < deadline {
-            if BACKLOG_PROMPT_CANCELLED.load(Ordering::Acquire) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        if !BACKLOG_PROMPT_CANCELLED.load(Ordering::Acquire) {
-            let _ = expand_transcribe_backlog_inner(&app);
-        }
-
-        let _ = cancel_item.set_enabled(false);
-        let _ = cancel_item.set_text("Cancel Auto-Expand");
-        BACKLOG_PROMPT_ACTIVE.store(false, Ordering::Release);
-    });
-}
-
 /// Returns a human-readable reason if the hotkey is reserved by the OS and
 /// therefore cannot be captured via a global shortcut — regardless of what
 /// other applications are doing. These keys always fail to register and would
@@ -936,59 +889,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
         }
     };
 
-    let register_transcribe = || -> Result<(), String> {
-        let hotkey = settings.transcribe_hotkey.trim();
-        if hotkey.is_empty() {
-            return Ok(());
-        }
-        if !try_claim(hotkey, "Transcribe") {
-            return Ok(());
-        }
-        info!("Registering Transcribe hotkey (toggle): {}", hotkey);
-        match manager.on_shortcut(hotkey, |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                let app = app.clone();
-                let was_enabled = app
-                    .state::<AppState>()
-                    .settings
-                    .read()
-                    .map(|settings| settings.transcribe_enabled)
-                    .unwrap_or(false);
-                let target_enabled = !was_enabled;
-                let effective_enabled = match set_transcribe_enabled(&app, target_enabled) {
-                    Ok(enabled) => enabled,
-                    Err(err) => {
-                        emit_error(&app, AppError::AudioDevice(err), Some("System Audio"));
-                        return;
-                    }
-                };
-                if effective_enabled != was_enabled {
-                    let cue = if effective_enabled { "start" } else { "stop" };
-                    let _ = app.emit("audio:cue", cue);
-                }
-            }
-        }) {
-            Ok(_) => {
-                info!("Transcribe hotkey registered successfully");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to register Transcribe hotkey '{}': {}", hotkey, e);
-                // Warn user but don't block
-                emit_error(
-          app,
-          AppError::Hotkey(format!(
-            "Warning: Transcribe hotkey '{}' may conflict with another application ({}). It might still work.",
-            hotkey, e
-          )),
-          Some("Hotkey Registration"),
-        );
-                warn!("Continuing despite Transcribe hotkey registration failure");
-                Ok(())
-            }
-        }
-    };
-
     match settings.mode.as_str() {
         "ptt" => {
             if let Err(e) = register_ptt() {
@@ -1007,10 +907,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 errors.push(format!("Toggle: {}", e));
             }
         }
-    }
-
-    if let Err(e) = register_transcribe() {
-        errors.push(format!("Transcribe: {}", e));
     }
 
     // Register Toggle Activation Words hotkey
@@ -1063,11 +959,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
                 "registered": !errors.iter().any(|e| e.starts_with("Toggle:")),
                 "error": errors.iter().find(|e| e.starts_with("Toggle:")).cloned(),
             },
-            "transcribe": {
-                "key": settings.transcribe_hotkey.trim(),
-                "registered": !errors.iter().any(|e| e.starts_with("Transcribe")),
-                "error": errors.iter().find(|e| e.starts_with("Transcribe")).cloned(),
-            },
             "activation_words": {
                 "key": settings.hotkey_toggle_activation_words.trim(),
                 "registered": !errors.iter().any(|e| e.starts_with("Toggle Activation")),
@@ -1088,43 +979,6 @@ fn register_hotkeys(app: &AppHandle, settings: &Settings) -> Result<(), String> 
     }
 }
 
-fn set_transcribe_enabled(app: &AppHandle, enabled: bool) -> Result<bool, String> {
-    let state = app.state::<AppState>();
-    let (settings, effective_enabled) = {
-        let mut current = state
-            .settings
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if current.transcribe_enabled == enabled {
-            return Ok(current.transcribe_enabled);
-        }
-        current.transcribe_enabled = enabled;
-        (current.clone(), enabled)
-    };
-
-    if effective_enabled {
-        if let Err(err) = start_transcribe_monitor(app, &state, &settings) {
-            let reverted = {
-                let mut current = state
-                    .settings
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                current.transcribe_enabled = false;
-                current.clone()
-            };
-            let _ = app.emit("settings-changed", reverted.clone());
-            let _ = app.emit("menu:update-transcribe", false);
-            return Err(err);
-        }
-    } else {
-        stop_transcribe_monitor_and_release_whisper(app, &state);
-    }
-
-    let _ = app.emit("settings-changed", settings.clone());
-    let _ = app.emit("menu:update-transcribe", effective_enabled);
-    Ok(effective_enabled)
-}
-
 /// Synchronous core of save_settings — used by both the async Tauri command
 /// and internal callers (e.g. tray menu handlers) that cannot await.
 pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> Result<(), String> {
@@ -1138,8 +992,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
         prev_mode,
         prev_device,
         prev_capture_enabled,
-        prev_transcribe_enabled,
-        prev_transcribe_output_device,
         prev_local_backend_preference,
         prev_ai_refinement_enabled,
     ) = {
@@ -1151,8 +1003,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
             current.mode.clone(),
             current.input_device.clone(),
             current.capture_enabled,
-            current.transcribe_enabled,
-            current.transcribe_output_device.clone(),
             current.local_backend_preference.clone(),
             current.ai_fallback.enabled,
         )
@@ -1230,20 +1080,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
         }
     }
     crate::audio::sync_ptt_hot_standby(app, &state, settings);
-
-    let transcribe_enabled_changed = prev_transcribe_enabled != settings.transcribe_enabled;
-    let transcribe_device_changed =
-        prev_transcribe_output_device != settings.transcribe_output_device;
-    if transcribe_enabled_changed {
-        if !settings.transcribe_enabled {
-            stop_transcribe_monitor_and_release_whisper(app, &state);
-        } else {
-            let _ = start_transcribe_monitor(app, &state, settings);
-        }
-    } else if transcribe_device_changed && settings.transcribe_enabled {
-        stop_transcribe_monitor_and_release_whisper(app, &state);
-        let _ = start_transcribe_monitor(app, &state, settings);
-    }
 
     let local_backend_changed = !prev_local_backend_preference
         .trim()
@@ -1323,7 +1159,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
     info!("[DIAG] save_settings_inner: emitting settings-changed");
     let _ = app.emit("settings-changed", settings.clone());
     let _ = app.emit("menu:update-mic", settings.capture_enabled);
-    let _ = app.emit("menu:update-transcribe", settings.transcribe_enabled);
     info!("[DIAG] save_settings_inner: done");
     Ok(())
 }
@@ -1758,14 +1593,6 @@ fn save_window_state(
 }
 
 #[tauri::command]
-fn expand_transcribe_backlog(
-    app: AppHandle,
-) -> Result<transcription::TranscribeBacklogStatus, String> {
-    cancel_backlog_auto_expand(&app);
-    expand_transcribe_backlog_inner(&app)
-}
-
-#[tauri::command]
 async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -1773,7 +1600,6 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
             .settings
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let old_model = settings.model.clone();
         settings.model = model_id.clone();
         drop(settings);
 
@@ -1786,43 +1612,14 @@ async fn apply_model(app: AppHandle, model_id: String) -> Result<(), String> {
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         )?;
 
-        // If transcription is active or Whisper server is running, restart with new model
-        // to clear old model from VRAM and load new model
-        if state.transcribe_active.load(Ordering::Relaxed) {
-            stop_transcribe_monitor_and_release_whisper(&app, &state);
-            let new_settings = state
-                .settings
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
-            if let Err(err) = start_transcribe_monitor(&app, &state, &new_settings) {
-                // Restore old model if restart fails
-                let mut settings = state
-                    .settings
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                settings.model = old_model;
-                drop(settings);
-                let _ = save_settings_file(
-                    &app,
-                    &state
-                        .settings
-                        .read()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                );
-                state.transcribe_active.store(false, Ordering::Relaxed);
-                return Err(format!("Failed to apply model: {}", err));
-            }
-        } else {
-            // Even if transcription is inactive, restart Whisper server if it's running
-            // to clear old model from VRAM and load new model
-            if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
-                let _ = crate::whisper_server::restart_whisper_server_if_running(
-                    &app,
-                    &state,
-                    &new_model_path,
-                );
-            }
+        // Restart Whisper server if it's running to clear the old model from VRAM
+        // and load the new model.
+        if let Some(new_model_path) = crate::models::resolve_model_path(&app, &model_id) {
+            let _ = crate::whisper_server::restart_whisper_server_if_running(
+                &app,
+                &state,
+                &new_model_path,
+            );
         }
 
         refresh_startup_status(&app, state.inner());
@@ -1987,129 +1784,6 @@ fn get_gpu_stats(state: State<'_, AppState>) -> GpuStats {
     }
 
     stats
-}
-
-/// Save raw mic/system samples as an `.opus` file via the opus module sidecar.
-/// Returns `Ok(None)` when the opus module is not installed — export is an
-/// opt-in capability, so its absence is a silent no-op, not an error.
-pub(crate) fn save_recording_opus(
-    app: &AppHandle,
-    samples: &[i16],
-    source: &str,
-    session_name: Option<&str>,
-) -> Result<Option<String>, String> {
-    // Opus export lives in an on-demand module. If it isn't installed, skip
-    // entirely — don't even write the intermediate WAV.
-    let Some(sidecar) = opus::resolve_sidecar(app) else {
-        return Ok(None);
-    };
-
-    // Generate human-readable filename
-    let now = chrono::Local::now();
-    let duration_s = samples.len() as f64 / 16000.0; // 16kHz sample rate
-    let duration_label = if duration_s < 60.0 {
-        format!("{}s", duration_s.round() as u32)
-    } else {
-        let mins = (duration_s / 60.0).floor() as u32;
-        let secs = (duration_s % 60.0).round() as u32;
-        if secs > 0 {
-            format!("{}m{}s", mins, secs)
-        } else {
-            format!("{}m", mins)
-        }
-    };
-
-    // Build base filename
-    let prefix = match source {
-        "mixed" => "call",
-        "output" => "system",
-        _ => "mic",
-    };
-
-    let base_filename = if let Some(name) = session_name {
-        // User-provided name: call_TeamStandup_20260215_1430_15m
-        let sanitized = sanitize_session_name(name);
-        let date = now.format("%Y%m%d").to_string();
-        let time = now.format("%H%M").to_string();
-        format!(
-            "{}_{}_{}_{}_{}",
-            prefix, sanitized, date, time, duration_label
-        )
-    } else {
-        // Fallback: Compact timestamp ID: call_0215T1430_15m
-        let timestamp_id = now.format("%m%dT%H%M").to_string();
-        format!("{}_{}_{}", prefix, timestamp_id, duration_label)
-    };
-
-    // Save to app data dir: ~/.local/share/trispr-flow/recordings/
-    let data_dir = crate::paths::resolve_base_dir(&app);
-    let recordings_dir = data_dir.join("recordings");
-
-    std::fs::create_dir_all(&recordings_dir)
-        .map_err(|e| format!("Failed to create recordings dir: {}", e))?;
-
-    let wav_filename = format!("{}.wav", base_filename);
-    let wav_path = recordings_dir.join(&wav_filename);
-
-    // Write WAV file
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: 16000,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-
-    let mut wav_writer = hound::WavWriter::create(&wav_path, spec)
-        .map_err(|e| format!("Failed to create WAV file: {}", e))?;
-
-    for &sample in samples {
-        wav_writer
-            .write_sample(sample)
-            .map_err(|e| format!("Failed to write WAV sample: {}", e))?;
-    }
-
-    wav_writer
-        .finalize()
-        .map_err(|e| format!("Failed to finalize WAV: {}", e))?;
-
-    // Convert WAV to OPUS via the sidecar
-    let opus_filename = format!("{}.opus", base_filename);
-    let opus_path = recordings_dir.join(&opus_filename);
-
-    let encode_result = opus::encode_with_sidecar(
-        &sidecar,
-        &wav_path,
-        &opus_path,
-        &opus::OpusEncoderConfig::default(),
-    );
-
-    // Delete WAV file (we only need OPUS), regardless of encode outcome.
-    let _ = std::fs::remove_file(&wav_path);
-
-    encode_result.map_err(|e| format!("Failed to encode OPUS: {}", e))?;
-    Ok(Some(opus_path.to_string_lossy().to_string()))
-}
-
-fn sanitize_session_name(name: &str) -> String {
-    let sanitized: String = name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-
-    let trimmed = sanitized.trim_matches('_').to_string();
-    if trimmed.is_empty() {
-        "session".to_string()
-    } else if trimmed.len() > 40 {
-        trimmed[..40].to_string()
-    } else {
-        trimmed
-    }
 }
 
 fn build_overlay_settings(settings: &Settings) -> overlay::OverlaySettings {
@@ -2610,13 +2284,11 @@ fn fill_rect_opaque(
 /// Nur EIN Zustand treibt die Optik: recording_active laesst BEIDE Buchstaben
 /// zusammen aufleuchten (Glow + volle Deckkraft) - kein separates
 /// "Transcribing"-Leuchten mehr, das brachte in der Praxis keinen erkennbaren
-/// Mehrwert. transcribe_active bleibt Parameter (Aufrufer/Event-Plumbing
-/// unveraendert), fliesst aber bewusst nicht mehr in die Optik ein.
+/// Mehrwert.
 fn create_tray_pulse_icon(
     size: usize,
     frame: usize,
     recording_active: bool,
-    _transcribe_active: bool,
 ) -> tauri::image::Image<'static> {
     use tauri::image::Image;
 
@@ -2709,10 +2381,8 @@ fn tray_icon_target_size(app: &AppHandle) -> usize {
 
 fn refresh_tray_icon(app: &AppHandle, frame: usize) {
     let capture_state = TRAY_CAPTURE_STATE.load(Ordering::Relaxed);
-    let transcribe_state = TRAY_TRANSCRIBE_STATE.load(Ordering::Relaxed);
     let recording_active = capture_state == 1;
-    let transcribe_active = transcribe_state == 1 || transcribe_state == 2;
-    let effective_frame = if recording_active || transcribe_active {
+    let effective_frame = if recording_active {
         frame
     } else {
         0
@@ -2720,8 +2390,7 @@ fn refresh_tray_icon(app: &AppHandle, frame: usize) {
 
     if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
         let size = tray_icon_target_size(app);
-        let icon =
-            create_tray_pulse_icon(size, effective_frame, recording_active, transcribe_active);
+        let icon = create_tray_pulse_icon(size, effective_frame, recording_active);
         let _ = tray.set_icon(Some(icon));
     }
 }
@@ -2733,14 +2402,13 @@ fn start_tray_pulse_loop(app: AppHandle) {
     crate::util::spawn_guarded("tray_pulse", move || {
         let frame_ms = (TRAY_PULSE_CYCLE_MS / TRAY_PULSE_FRAMES as u64).max(120);
         let mut frame = 0usize;
-        let mut last_signature = (u8::MAX, u8::MAX, usize::MAX);
+        let mut last_signature = (u8::MAX, usize::MAX);
 
         loop {
             let capture_state = TRAY_CAPTURE_STATE.load(Ordering::Relaxed);
-            let transcribe_state = TRAY_TRANSCRIBE_STATE.load(Ordering::Relaxed);
-            let active = capture_state == 1 || transcribe_state == 1 || transcribe_state == 2;
+            let active = capture_state == 1;
             let effective_frame = if active { frame } else { 0 };
-            let signature = (capture_state, transcribe_state, effective_frame);
+            let signature = (capture_state, effective_frame);
             if signature != last_signature {
                 refresh_tray_icon(&app, effective_frame);
                 last_signature = signature;
@@ -3097,41 +2765,23 @@ pub fn run() {
                 });
             }
 
-            let mut settings = load_settings(app.handle());
+            let settings = load_settings(app.handle());
             crate::state::sync_diagnostic_logging_enabled(&settings);
 
             // Compute partition base directories and legacy paths for migration.
             let app_data_dir = crate::paths::resolve_base_dir(app.handle());
             let mic_history_dir = app_data_dir.join("history").join("mic");
-            let system_history_dir = app_data_dir.join("history").join("system");
             let legacy_mic_path = app_data_dir.join("history.json");
-            let legacy_system_path = app_data_dir.join("history_transcribe.json");
 
-            let (history, history_transcribe) = std::thread::scope(|s| {
-                let mic = s.spawn(|| {
-                    PartitionedHistory::load_or_migrate(mic_history_dir, Some(&legacy_mic_path))
-                });
-                let sys = s.spawn(|| {
-                    PartitionedHistory::load_or_migrate(
-                        system_history_dir,
-                        Some(&legacy_system_path),
-                    )
-                });
-                (
-                    mic.join().expect("mic history load"),
-                    sys.join().expect("system history load"),
-                )
-            });
+            let history =
+                PartitionedHistory::load_or_migrate(mic_history_dir, Some(&legacy_mic_path));
 
             app.manage(AppState {
                 settings: std::sync::RwLock::new(settings.clone()),
                 history: Mutex::new(history),
-                history_transcribe: Mutex::new(history_transcribe),
                 recorder: Mutex::new(crate::audio::Recorder::new()),
-                transcribe: Mutex::new(crate::transcription::TranscribeRecorder::new()),
                 downloads: Mutex::new(HashSet::new()),
                 ollama_pulls: Mutex::new(HashSet::new()),
-                transcribe_active: AtomicBool::new(false),
                 refinement_active_count: AtomicUsize::new(0),
                 refinement_watchdog_generation: AtomicU64::new(0),
                 refinement_last_change_ms: AtomicU64::new(0),
@@ -3159,7 +2809,6 @@ pub fn run() {
                 frontend_watchdog_state: Mutex::new(state::FrontendWatchdogState::default()),
                 enter_capture: crate::state::EnterCaptureState::default(),
                 #[cfg(target_os = "windows")]
-                system_cluster_buffer: Mutex::new(state::SystemClusterBuffer::default()),
                 #[cfg(target_os = "windows")]
                 managed_process_job: create_managed_process_job(),
             });
@@ -3236,50 +2885,11 @@ pub fn run() {
                 });
             }
 
-            let _ = app.emit("transcribe:state", "idle");
-
-            // Initialise session manager with the recordings directory
-            {
-                let recordings_dir = paths::resolve_recordings_dir(app.handle());
-                let modules_dir = paths::resolve_modules_dir(app.handle());
-                session_manager::init(recordings_dir.clone(), modules_dir);
-                session_manager::set_opus_module_enabled(
-                    settings.module_settings.enabled_modules.contains("opus"),
-                );
-
-                // Surface any incomplete sessions from a previous crash as a warning
-                let incomplete = session_manager::scan_incomplete(&recordings_dir);
-                if !incomplete.is_empty() {
-                    warn!(
-                        "{} incomplete audio session(s) found from a previous run: {:?}",
-                        incomplete.len(),
-                        incomplete
-                    );
-                    // Emit so the frontend can show a recovery toast (future work)
-                    let _ = app.emit("session:recovery-available", incomplete.len());
-                }
-            }
-
             info!("[DIAG] setup: registering hotkeys...");
             if let Err(err) = register_hotkeys(app.handle(), &settings) {
                 warn!("Failed to register hotkeys: {}", err);
             }
             info!("[DIAG] setup: hotkeys done");
-
-            if settings.transcribe_enabled {
-                let state = app.state::<AppState>();
-                if let Err(err) = start_transcribe_monitor(app.handle(), &state, &settings) {
-                    warn!("Failed to start transcribe monitor during setup: {}", err);
-                    settings.transcribe_enabled = false;
-                    {
-                        let mut current = state
-                            .settings
-                            .write()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        current.transcribe_enabled = false;
-                    }
-                }
-            }
 
             // Heartbeat watchdog: logs alive status every 30s to detect event-loop freezes
             crate::util::spawn_guarded("heartbeat", || {
@@ -3546,16 +3156,6 @@ pub fn run() {
                 loaded_icon.unwrap_or_else(create_fallback_icon)
             };
 
-            let cancel_backlog_item = MenuItem::with_id(
-                app,
-                "cancel-backlog-expand",
-                "Cancel Auto-Expand",
-                false,
-                None::<&str>,
-            )?;
-            let cancel_backlog_item_menu = cancel_backlog_item.clone();
-            let cancel_backlog_item_event = cancel_backlog_item.clone();
-
             let _tray_icon = tauri::tray::TrayIconBuilder::with_id(TRAY_ICON_ID)
                 .icon(icon)
                 .tooltip("Trispr Flow\nCtrl+Alt+Middle-click: re-paste last text")
@@ -3567,9 +3167,6 @@ pub fn run() {
                             button_state: MouseButtonState::Up,
                             ..
                         } => {
-                            if BACKLOG_PROMPT_ACTIVE.load(Ordering::Acquire) {
-                                return;
-                            }
                             if should_handle_tray_click() {
                                 toggle_main_window(tray.app_handle());
                             }
@@ -3590,21 +3187,6 @@ pub fn run() {
                                 emit_error(&app_clone, AppError::Storage(err), Some("Tray menu"));
                             }
                         });
-                    }
-                    "toggle-transcribe" => {
-                        let app_clone = app.clone();
-                        crate::util::spawn_guarded("tray_toggle_transcribe", move || {
-                            let mut current = app_clone.state::<AppState>().settings.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-                            current.transcribe_enabled = !current.transcribe_enabled;
-                            if let Err(err) = save_settings_inner(&app_clone, &mut current) {
-                                emit_error(&app_clone, AppError::Storage(err), Some("Tray menu"));
-                            }
-                        });
-                    }
-                    "cancel-backlog-expand" => {
-                        cancel_backlog_auto_expand(app);
-                        let _ = cancel_backlog_item_event.set_enabled(false);
-                        let _ = cancel_backlog_item_event.set_text("Cancel Auto-Expand");
                     }
                     "quit" => {
                         cleanup_managed_processes(app, app.state::<AppState>().inner());
@@ -3641,22 +3223,6 @@ pub fn run() {
                         }
                     });
 
-                    let transcribe_item = CheckMenuItem::with_id(
-                        app,
-                        "toggle-transcribe",
-                        "System audio transcription",
-                        true,
-                        settings.transcribe_enabled,
-                        None::<&str>,
-                    )?;
-
-                    let transcribe_item_clone = transcribe_item.clone();
-                    app.listen("menu:update-transcribe", move |event| {
-                        if let Ok(checked) = serde_json::from_str::<bool>(event.payload()) {
-                            let _ = transcribe_item_clone.set_checked(checked);
-                        }
-                    });
-
                     &tauri::menu::Menu::with_items(
                         app,
                         &[
@@ -3669,9 +3235,6 @@ pub fn run() {
                             )?,
                             &tauri::menu::PredefinedMenuItem::separator(app)?,
                             &mic_item,
-                            &transcribe_item,
-                            &tauri::menu::PredefinedMenuItem::separator(app)?,
-                            &cancel_backlog_item_menu,
                             &tauri::menu::PredefinedMenuItem::separator(app)?,
                             &tauri::menu::MenuItem::with_id(
                                 app,
@@ -3691,22 +3254,6 @@ pub fn run() {
                 let code = parse_tray_state_code(event.payload());
                 TRAY_CAPTURE_STATE.store(code, Ordering::Relaxed);
                 refresh_tray_icon(&tray_capture_handle, 0);
-            });
-
-            let tray_transcribe_handle = app.handle().clone();
-            app.listen("transcribe:state", move |event| {
-                let code = parse_tray_state_code(event.payload());
-                TRAY_TRANSCRIBE_STATE.store(code, Ordering::Relaxed);
-                refresh_tray_icon(&tray_transcribe_handle, 0);
-            });
-
-            let backlog_prompt_handle = app.handle().clone();
-            let cancel_backlog_item_prompt = cancel_backlog_item.clone();
-            app.listen("transcribe:backlog-warning", move |_event| {
-                schedule_backlog_auto_expand(
-                    backlog_prompt_handle.clone(),
-                    cancel_backlog_item_prompt.clone(),
-                );
             });
 
             refresh_tray_icon(app.handle(), 0);
@@ -3802,7 +3349,6 @@ pub fn run() {
             uninstall_module,
             save_transcript,
             list_audio_devices,
-            list_output_devices,
             list_models,
             download_model,
             check_model_available,
@@ -3813,18 +3359,13 @@ pub fn run() {
             pick_model_dir,
             get_models_dir,
             get_history,
-            get_transcribe_history,
             clear_active_transcript_history,
             delete_active_transcript_entry,
             list_history_partitions,
             load_history_partition,
-            expand_transcribe_backlog,
             apply_model,
             validate_hotkey,
-            save_crash_recovery,
-            clear_crash_recovery,
             get_dependency_preflight_status,
-            open_recordings_directory,
             check_ollama_model_updates,
             check_ollama_model_requirements,
             get_ollama_model_details,

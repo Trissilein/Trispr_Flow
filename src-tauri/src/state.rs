@@ -10,7 +10,6 @@ use crate::history_partition::PartitionedHistory;
 use crate::modules::{normalize_module_settings, ModuleSettings};
 use crate::overlay::OverlayController;
 use crate::paths::resolve_config_path;
-use crate::transcription::TranscribeRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -26,7 +25,6 @@ const HISTORY_LOCK_WARN_MS: u128 = 20;
 /// thread is already scheduled to flush the corresponding history to disk within
 /// 200 ms — additional writes during that window are coalesced.
 static HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
-static TRANSCRIBE_HISTORY_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 static DIAGNOSTIC_LOGGING_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn diagnostic_logging_enabled() -> bool {
@@ -79,10 +77,6 @@ fn default_overlay_refining_indicator_range() -> f32 {
 
 fn default_history_alias_mic() -> String {
     "Input".to_string()
-}
-
-fn default_history_alias_system() -> String {
-    "System audio".to_string()
 }
 
 fn default_topic_keywords() -> HashMap<String, Vec<String>> {
@@ -273,21 +267,10 @@ pub(crate) struct Settings {
     pub(crate) vad_threshold_start: f32,
     pub(crate) vad_threshold_sustain: f32,
     pub(crate) vad_silence_ms: u64,
-    pub(crate) transcribe_enabled: bool,
-    pub(crate) transcribe_hotkey: String,
     pub(crate) hotkey_toggle_activation_words: String,
-    pub(crate) transcribe_output_device: String,
-    pub(crate) transcribe_vad_mode: bool,
-    pub(crate) transcribe_vad_threshold: f32,
-    pub(crate) transcribe_vad_silence_ms: u64,
-    pub(crate) transcribe_batch_interval_ms: u64,
-    pub(crate) transcribe_chunk_overlap_ms: u64,
-    pub(crate) transcribe_input_gain_db: f32,
     pub(crate) mic_input_gain_db: f32,
     #[serde(default = "default_history_alias_mic")]
     pub(crate) history_alias_mic: String,
-    #[serde(default = "default_history_alias_system")]
-    pub(crate) history_alias_system: String,
     pub(crate) capture_enabled: bool,
     pub(crate) model_source: String,
     pub(crate) model_custom_url: String,
@@ -363,11 +346,6 @@ pub(crate) struct Settings {
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
-    // OPUS archive settings
-    pub(crate) opus_enabled: bool,
-    pub(crate) opus_bitrate_kbps: u32,
-    pub(crate) auto_save_system_audio: bool, // Auto-save system audio as OPUS
-    pub(crate) auto_save_mic_audio: bool,    // Auto-save mic continuous audio as OPUS
     // Intelligent continuous dump settings
     pub(crate) continuous_dump_enabled: bool,
     pub(crate) continuous_dump_profile: String, // "balanced" | "low_latency" | "high_quality"
@@ -382,17 +360,9 @@ pub(crate) struct Settings {
     pub(crate) continuous_mic_soft_flush_ms: u64,
     pub(crate) continuous_mic_silence_flush_ms: u64,
     pub(crate) continuous_mic_hard_cut_ms: u64,
-    pub(crate) continuous_system_override_enabled: bool,
-    pub(crate) continuous_system_soft_flush_ms: u64,
-    pub(crate) continuous_system_silence_flush_ms: u64,
-    pub(crate) continuous_system_hard_cut_ms: u64,
     pub(crate) transcribe_backend: String, // "whisper_cpp" | future backends
     #[serde(default = "default_local_backend_preference")]
     pub(crate) local_backend_preference: String, // "auto" | "cuda" | "vulkan"
-    // Session consolidation settings (v0.7.0)
-    pub(crate) session_idle_timeout_ms: u64, // Auto-finalize session after N ms of silence
-    pub(crate) ptt_session_grouping_enabled: bool, // Group multiple PTT presses into one session
-    pub(crate) ptt_session_group_timeout_s: u64, // PTT presses within this window → same session
     // Main window state
     pub(crate) main_window_x: Option<i32>,
     pub(crate) main_window_y: Option<i32>,
@@ -429,19 +399,9 @@ impl Default for Settings {
       vad_threshold_start: VAD_THRESHOLD_START_DEFAULT,
       vad_threshold_sustain: VAD_THRESHOLD_SUSTAIN_DEFAULT,
       vad_silence_ms: VAD_SILENCE_MS_DEFAULT,
-      transcribe_enabled: true,
-      transcribe_hotkey: "CommandOrControl+Shift+T".to_string(),
       hotkey_toggle_activation_words: "CommandOrControl+Shift+A".to_string(),
-      transcribe_output_device: "default".to_string(),
-      transcribe_vad_mode: false,
-      transcribe_vad_threshold: 0.04,
-      transcribe_vad_silence_ms: 900,
-      transcribe_batch_interval_ms: 8000,
-      transcribe_chunk_overlap_ms: 1000,
-      transcribe_input_gain_db: 0.0,
       mic_input_gain_db: 0.0,
       history_alias_mic: default_history_alias_mic(),
-      history_alias_system: default_history_alias_system(),
       capture_enabled: true,
       model_source: "default".to_string(),
       model_custom_url: "".to_string(),
@@ -495,10 +455,6 @@ impl Default for Settings {
       postproc_llm_enabled: false,
       postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
-      opus_enabled: true,
-      opus_bitrate_kbps: 64,
-      auto_save_system_audio: false,
-      auto_save_mic_audio: false,
       continuous_dump_enabled: true,
       continuous_dump_profile: "balanced".to_string(),
       continuous_soft_flush_ms: 10_000,
@@ -512,15 +468,8 @@ impl Default for Settings {
       continuous_mic_soft_flush_ms: 10_000,
       continuous_mic_silence_flush_ms: 1_200,
       continuous_mic_hard_cut_ms: 45_000,
-      continuous_system_override_enabled: false,
-      continuous_system_soft_flush_ms: 10_000,
-      continuous_system_silence_flush_ms: 1_200,
-      continuous_system_hard_cut_ms: 45_000,
       transcribe_backend: "whisper_cpp".to_string(),
       local_backend_preference: default_local_backend_preference(),
-      session_idle_timeout_ms: 60_000,       // 60 seconds
-      ptt_session_grouping_enabled: true,
-      ptt_session_group_timeout_s: 120,      // 2 minutes
       main_window_x: None,
       main_window_y: None,
       main_window_width: None,
@@ -585,12 +534,6 @@ pub(crate) struct HistoryEntry {
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) struct SystemClusterBuffer {
-    pub(crate) entries: Vec<(String, String, u64)>, // (entry_id, text, timestamp_ms)
-    pub(crate) last_chunk_ms: u64,
-}
-
-#[cfg(target_os = "windows")]
 pub(crate) struct ManagedProcessJob {
     pub(crate) handle: isize,
 }
@@ -603,16 +546,6 @@ impl Drop for ManagedProcessJob {
         }
         unsafe {
             let _ = windows_sys::Win32::Foundation::CloseHandle(self.handle as _);
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl Default for SystemClusterBuffer {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            last_chunk_ms: 0,
         }
     }
 }
@@ -753,12 +686,9 @@ pub struct EnterCaptureState {
 pub(crate) struct AppState {
     pub(crate) settings: RwLock<Settings>,
     pub(crate) history: Mutex<PartitionedHistory>,
-    pub(crate) history_transcribe: Mutex<PartitionedHistory>,
     pub(crate) recorder: Mutex<Recorder>,
-    pub(crate) transcribe: Mutex<TranscribeRecorder>,
     pub(crate) downloads: Mutex<HashSet<String>>,
     pub(crate) ollama_pulls: Mutex<HashSet<String>>,
-    pub(crate) transcribe_active: AtomicBool,
     pub(crate) refinement_active_count: AtomicUsize,
     pub(crate) refinement_watchdog_generation: AtomicU64,
     pub(crate) refinement_last_change_ms: AtomicU64,
@@ -797,7 +727,6 @@ pub(crate) struct AppState {
     pub(crate) frontend_watchdog_state: Mutex<FrontendWatchdogState>,
     pub(crate) enter_capture: EnterCaptureState,
     #[cfg(target_os = "windows")]
-    pub(crate) system_cluster_buffer: Mutex<SystemClusterBuffer>,
     #[cfg(target_os = "windows")]
     pub(crate) managed_process_job: Option<ManagedProcessJob>,
 }
@@ -860,27 +789,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.vad_silence_ms < 100 {
                 settings.vad_silence_ms = VAD_SILENCE_MS_DEFAULT;
             }
-            if !(0.0..=1.0).contains(&settings.transcribe_vad_threshold) {
-                settings.transcribe_vad_threshold = 0.04;
-            }
-            if settings.transcribe_batch_interval_ms < 4000 {
-                settings.transcribe_batch_interval_ms = 4000;
-            }
-            if settings.transcribe_batch_interval_ms > 15000 {
-                settings.transcribe_batch_interval_ms = 15000;
-            }
-            if settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms {
-                settings.transcribe_chunk_overlap_ms = settings.transcribe_batch_interval_ms / 2;
-            }
-            if settings.transcribe_chunk_overlap_ms > 3000 {
-                settings.transcribe_chunk_overlap_ms = 3000;
-            }
-            if settings.transcribe_vad_silence_ms < 200 {
-                settings.transcribe_vad_silence_ms = 200;
-            }
-            if settings.transcribe_vad_silence_ms > 5000 {
-                settings.transcribe_vad_silence_ms = 5000;
-            }
             normalize_continuous_dump_fields(&mut settings);
             normalize_history_alias_fields(&mut settings);
             if settings.transcribe_backend.trim().is_empty() {
@@ -922,15 +830,7 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
                 }
             }
             sync_model_dir_env(&settings);
-            settings.transcribe_input_gain_db =
-                settings.transcribe_input_gain_db.clamp(-30.0, 30.0);
             settings.mic_input_gain_db = settings.mic_input_gain_db.clamp(-30.0, 30.0);
-            #[cfg(target_os = "windows")]
-            if settings.transcribe_output_device != "default"
-                && !settings.transcribe_output_device.starts_with("wasapi:")
-            {
-                settings.transcribe_output_device = "default".to_string();
-            }
             if !settings.overlay_min_radius.is_finite() {
                 settings.overlay_min_radius = 16.0;
             }
@@ -1112,9 +1012,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
-
-            // Transcribe enablement is session-only; always start disabled.
-            settings.transcribe_enabled = false;
             settings
         }
         Err(_) => Settings::default(),
@@ -1270,49 +1167,11 @@ pub(crate) fn normalize_ai_refinement_module_binding(settings: &mut Settings) {
 }
 
 pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
-    // Default values for legacy migration comparisons — avoids constructing a full
-    // Settings::default() on every call.
-    const DEFAULT_CONTINUOUS_SOFT_FLUSH_MS: u64 = 10_000;
-    const DEFAULT_CONTINUOUS_SYSTEM_SOFT_FLUSH_MS: u64 = 10_000;
-    const DEFAULT_CONTINUOUS_SILENCE_FLUSH_MS: u64 = 1_200;
-    const DEFAULT_CONTINUOUS_SYSTEM_SILENCE_FLUSH_MS: u64 = 1_200;
-    const DEFAULT_CONTINUOUS_PRE_ROLL_MS: u64 = 300;
-    const DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS: u64 = 8_000;
-    const DEFAULT_TRANSCRIBE_VAD_SILENCE_MS: u64 = 900;
-    const DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_MS: u64 = 1_000;
-
     if settings.continuous_dump_profile != "balanced"
         && settings.continuous_dump_profile != "low_latency"
         && settings.continuous_dump_profile != "high_quality"
     {
         settings.continuous_dump_profile = "balanced".to_string();
-    }
-
-    // Legacy migration from interval/overlap system-audio settings.
-    if settings.continuous_soft_flush_ms == DEFAULT_CONTINUOUS_SOFT_FLUSH_MS
-        && settings.transcribe_batch_interval_ms != DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS
-    {
-        settings.continuous_soft_flush_ms = settings.transcribe_batch_interval_ms;
-    }
-    if settings.continuous_system_soft_flush_ms == DEFAULT_CONTINUOUS_SYSTEM_SOFT_FLUSH_MS
-        && settings.transcribe_batch_interval_ms != DEFAULT_TRANSCRIBE_BATCH_INTERVAL_MS
-    {
-        settings.continuous_system_soft_flush_ms = settings.transcribe_batch_interval_ms;
-    }
-    if settings.continuous_silence_flush_ms == DEFAULT_CONTINUOUS_SILENCE_FLUSH_MS
-        && settings.transcribe_vad_silence_ms != DEFAULT_TRANSCRIBE_VAD_SILENCE_MS
-    {
-        settings.continuous_silence_flush_ms = settings.transcribe_vad_silence_ms;
-    }
-    if settings.continuous_system_silence_flush_ms == DEFAULT_CONTINUOUS_SYSTEM_SILENCE_FLUSH_MS
-        && settings.transcribe_vad_silence_ms != DEFAULT_TRANSCRIBE_VAD_SILENCE_MS
-    {
-        settings.continuous_system_silence_flush_ms = settings.transcribe_vad_silence_ms;
-    }
-    if settings.continuous_pre_roll_ms == DEFAULT_CONTINUOUS_PRE_ROLL_MS
-        && settings.transcribe_chunk_overlap_ms != DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_MS
-    {
-        settings.continuous_pre_roll_ms = settings.transcribe_chunk_overlap_ms;
     }
 
     settings.continuous_soft_flush_ms = settings.continuous_soft_flush_ms.clamp(4_000, 30_000);
@@ -1334,34 +1193,6 @@ pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
         settings.continuous_mic_silence_flush_ms.clamp(300, 5_000);
     settings.continuous_mic_hard_cut_ms =
         settings.continuous_mic_hard_cut_ms.clamp(15_000, 120_000);
-
-    settings.continuous_system_soft_flush_ms = settings
-        .continuous_system_soft_flush_ms
-        .clamp(4_000, 30_000);
-    settings.continuous_system_silence_flush_ms = settings
-        .continuous_system_silence_flush_ms
-        .clamp(300, 5_000);
-    settings.continuous_system_hard_cut_ms = settings
-        .continuous_system_hard_cut_ms
-        .clamp(15_000, 120_000);
-
-    // Keep legacy controls in sync while old UI / settings still exist.
-    let legacy_soft = if settings.continuous_system_override_enabled {
-        settings.continuous_system_soft_flush_ms
-    } else {
-        settings.continuous_soft_flush_ms
-    };
-    let legacy_silence = if settings.continuous_system_override_enabled {
-        settings.continuous_system_silence_flush_ms
-    } else {
-        settings.continuous_silence_flush_ms
-    };
-    settings.transcribe_batch_interval_ms = legacy_soft.clamp(4_000, 15_000);
-    settings.transcribe_vad_silence_ms = legacy_silence.clamp(200, 5_000);
-    settings.transcribe_chunk_overlap_ms = settings.continuous_pre_roll_ms.min(3_000);
-    if settings.transcribe_chunk_overlap_ms > settings.transcribe_batch_interval_ms {
-        settings.transcribe_chunk_overlap_ms = settings.transcribe_batch_interval_ms / 2;
-    }
 }
 
 fn normalize_history_alias_value(value: &str, fallback: &str) -> String {
@@ -1376,16 +1207,11 @@ fn normalize_history_alias_value(value: &str, fallback: &str) -> String {
 pub(crate) fn normalize_history_alias_fields(settings: &mut Settings) {
     settings.history_alias_mic =
         normalize_history_alias_value(&settings.history_alias_mic, &default_history_alias_mic());
-    settings.history_alias_system = normalize_history_alias_value(
-        &settings.history_alias_system,
-        &default_history_alias_system(),
-    );
 }
 
 pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> String {
     match source {
         "mic" => settings.history_alias_mic.clone(),
-        "output" | "system" => settings.history_alias_system.clone(),
         _ => source.to_string(),
     }
 }
@@ -1393,8 +1219,6 @@ pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> Stri
 pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = resolve_config_path(app, "settings.json");
     let mut persisted = settings.clone();
-    // Do not persist session-only transcribe enablement.
-    persisted.transcribe_enabled = false;
     normalize_module_settings(&mut persisted.module_settings);
     normalize_history_alias_fields(&mut persisted);
     normalize_ai_refinement_module_binding(&mut persisted);
@@ -1492,64 +1316,6 @@ pub(crate) fn push_history_entry_inner(
     Ok(updated)
 }
 
-pub(crate) fn push_transcribe_entry_inner(
-    app: &AppHandle,
-    history: &Mutex<PartitionedHistory>,
-    text: String,
-) -> Result<Vec<HistoryEntry>, String> {
-    let speaker_name = {
-        let state = app.state::<AppState>();
-        let settings = state
-            .settings
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        Some(speaker_name_for_source(&settings, "output"))
-    };
-    let lock_started = Instant::now();
-    let mut ph = history
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let entry = HistoryEntry {
-        id: format!("o_{}", crate::util::now_ms()),
-        text,
-        timestamp_ms: crate::util::now_ms(),
-        source: "output".to_string(),
-        speaker_name,
-        refinement: None,
-    };
-    ph.push_entry(entry);
-    let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
-    let lock_elapsed_ms = lock_started.elapsed().as_millis();
-    drop(ph);
-    if lock_elapsed_ms > HISTORY_LOCK_WARN_MS {
-        warn!(
-            "History lock hold exceeded threshold in push_transcribe_entry_inner: {}ms",
-            lock_elapsed_ms
-        );
-    }
-
-    // Debounced persist: only schedule a disk write if none is already pending.
-    if !TRANSCRIBE_HISTORY_SAVE_PENDING.swap(true, Ordering::AcqRel) {
-        let app_clone = app.clone();
-        crate::util::spawn_guarded("transcribe_history_save_debounce", move || {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-            TRANSCRIBE_HISTORY_SAVE_PENDING.store(false, Ordering::Release);
-            let state = app_clone.state::<AppState>();
-            let ph = state
-                .history_transcribe
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Err(e) = ph.flush_to_disk() {
-                warn!("Debounced transcribe history save failed: {}", e);
-            }
-        });
-    }
-
-    // Event emission remains synchronous — UI always gets the update immediately.
-    let _ = app.emit("transcribe:history-updated", updated.clone());
-    Ok(updated)
-}
-
 fn emit_updated_history(app: &AppHandle, event_name: &str, updated: Vec<HistoryEntry>) {
     let _ = app.emit(event_name, updated);
 }
@@ -1598,17 +1364,7 @@ where
         return Ok(());
     }
     let state = app.state::<AppState>();
-    if update_history_entry_in_store(app, &state.history, "history:updated", entry_id, &mut apply)?
-    {
-        return Ok(());
-    }
-    let _ = update_history_entry_in_store(
-        app,
-        &state.history_transcribe,
-        "transcribe:history-updated",
-        entry_id,
-        &mut apply,
-    )?;
+    update_history_entry_in_store(app, &state.history, "history:updated", entry_id, &mut apply)?;
     Ok(())
 }
 
@@ -1831,6 +1587,48 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["ai_refinement.migrated_legacy"]
         );
+    }
+
+    #[test]
+    fn settings_with_removed_system_audio_opus_recording_fields_still_load() {
+        // Shape of a settings.json written before System-Audio transcription, Opus / recording
+        // export and the session manager were removed. Unknown fields are ignored by serde; the
+        // kept mic fields next to them must survive untouched.
+        let raw = r##"{
+            "mode": "ptt",
+            "hotkey_ptt": "CommandOrControl+Shift+Space",
+            "continuous_dump_profile": "low_latency",
+            "continuous_mic_soft_flush_ms": 12000,
+            "transcribe_enabled": true,
+            "transcribe_hotkey": "CommandOrControl+Shift+T",
+            "transcribe_output_device": "wasapi:{0.0.0.00000000}.{abc}",
+            "transcribe_vad_mode": true,
+            "transcribe_vad_threshold": 0.05,
+            "transcribe_vad_silence_ms": 1000,
+            "transcribe_batch_interval_ms": 9000,
+            "transcribe_chunk_overlap_ms": 500,
+            "transcribe_input_gain_db": 3.0,
+            "history_alias_system": "Speakers",
+            "opus_enabled": true,
+            "opus_bitrate_kbps": 96,
+            "auto_save_system_audio": true,
+            "auto_save_mic_audio": true,
+            "continuous_system_override_enabled": true,
+            "continuous_system_soft_flush_ms": 9000,
+            "continuous_system_silence_flush_ms": 900,
+            "continuous_system_hard_cut_ms": 60000,
+            "session_idle_timeout_ms": 60000,
+            "ptt_session_grouping_enabled": true,
+            "ptt_session_group_timeout_s": 120,
+            "module_settings": { "enabled_modules": ["opus", "ai_refinement"] }
+        }"##;
+
+        let mut settings: Settings =
+            serde_json::from_str(raw).expect("old settings.json must still deserialize");
+        normalize_continuous_dump_fields(&mut settings);
+        assert_eq!(settings.mode, "ptt");
+        assert_eq!(settings.continuous_dump_profile, "low_latency");
+        assert_eq!(settings.continuous_mic_soft_flush_ms, 12_000);
     }
 
     #[test]

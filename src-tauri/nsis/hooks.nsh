@@ -34,10 +34,6 @@
 Var HardwareDialog
 Var DetectedGpuStr
 
-; Page 2: Components
-Var ComponentsDialog
-Var CheckFFmpeg
-Var ComponentFFmpegSelected
 
 ; Page 3: First-run config
 Var FirstRunDialog
@@ -63,7 +59,6 @@ Var SummaryFont
 ; and the directory selector page)
 ; =====================================================================
 Page custom HardwareVariantPage HardwareVariantPageLeave
-Page custom ComponentsPage ComponentsPageLeave
 Page custom FirstRunConfigPage FirstRunConfigPageLeave
 Page custom CaptureModeConfigPage CaptureModeConfigPageLeave
 Page custom HardwareSummaryPage
@@ -145,51 +140,6 @@ FunctionEnd
 
 Function HardwareVariantPageLeave
   ; Nothing to capture — informational page only
-FunctionEnd
-
-; =====================================================================
-; Page 2: Component Selection
-; =====================================================================
-
-Function ComponentsPage
-  nsDialogs::Create 1018
-  Pop $ComponentsDialog
-  ${If} $ComponentsDialog == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateLabel} 0 0 100% 20u "Komponenten"
-  Pop $0
-  CreateFont $1 "Segoe UI" 11 700
-  SendMessage $0 ${WM_SETFONT} $1 1
-
-!if "${TRISPR_VARIANT}" == "cuda-complete"
-  ${NSD_CreateLabel} 0 24u 100% 18u "Offline-Variante: FFmpeg ist bereits enthalten."
-  Pop $0
-!else
-  ${NSD_CreateLabel} 0 24u 100% 12u "Audio-Encoder (wird heruntergeladen bei Installation):"
-  Pop $0
-
-  ${NSD_CreateCheckbox} 10u 37u 100% 13u "FFmpeg ~84 MB - benötigt für OPUS-Aufnahme"
-  Pop $CheckFFmpeg
-  ${NSD_SetState} $CheckFFmpeg ${BST_CHECKED}
-!endif
-
-  nsDialogs::Show
-FunctionEnd
-
-Function ComponentsPageLeave
-!if "${TRISPR_VARIANT}" == "cuda-complete"
-  ; All components bundled in offline installer
-  StrCpy $ComponentFFmpegSelected "0"
-!else
-  ${NSD_GetState} $CheckFFmpeg $0
-  ${If} $0 == ${BST_CHECKED}
-    StrCpy $ComponentFFmpegSelected "1"
-  ${Else}
-    StrCpy $ComponentFFmpegSelected "0"
-  ${EndIf}
-!endif
 FunctionEnd
 
 ; =====================================================================
@@ -307,16 +257,6 @@ Function HardwareSummaryPage
   ${If} $DetectedGpuStr != "Keine NVIDIA GPU erkannt"
     StrCpy $R0 "$R0GPU-Modus:       High Performance (NVIDIA) konfiguriert$\r$\n"
   ${EndIf}
-
-!if "${TRISPR_VARIANT}" == "cuda-complete"
-  StrCpy $R0 "$R0FFmpeg:           Enthalten (Offline)$\r$\n"
-!else
-  ${If} $ComponentFFmpegSelected == "1"
-    StrCpy $R0 "$R0FFmpeg:           Download ~84 MB$\r$\n"
-  ${Else}
-    StrCpy $R0 "$R0FFmpeg:           Nein$\r$\n"
-  ${EndIf}
-!endif
 
   ${If} $AIRefinementSelected == "1"
     StrCpy $R0 "$R0KI-Verfeinerung:  Aktiviert (Download beim ersten Start)$\r$\n"
@@ -444,42 +384,6 @@ FunctionEnd
   ; ----------------------------------------------------------------
   ; Core runtime downloads (skipped for cuda-complete: already bundled)
   ; ----------------------------------------------------------------
-
-!if "${TRISPR_VARIANT}" != "cuda-complete"
-
-  ; --- FFmpeg download (via PowerShell for better reliability) ---
-  ${If} $ComponentFFmpegSelected == "1"
-    CreateDirectory "$INSTDIR\bin\ffmpeg"
-    DetailPrint "Lade FFmpeg herunter..."
-    nsExec::ExecToStack 'powershell -NoProfile -Command "Try{$ProgressPreference=\"SilentlyContinue\";Invoke-WebRequest -Uri \"https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip\" -OutFile \"$TEMP\trispr-ffmpeg.zip\" -UseBasicParsing}Catch{Exit 1}"'
-    Pop $0
-    ${If} $0 != 0
-      IfSilent +2 0
-      MessageBox MB_OK|MB_ICONEXCLAMATION "FFmpeg konnte nicht heruntergeladen werden.$\r$\nOPUS-Aufnahme wird nicht verfügbar sein.$\r$\nManuelle Installation: ffmpeg.exe nach$\r$\n$INSTDIR\bin\ffmpeg\ kopieren."
-      Goto FFmpegDownloadDone
-    ${EndIf}
-    DetailPrint "Entpacke FFmpeg..."
-    nsExec::ExecToStack 'powershell -NoProfile -Command "Expand-Archive -Path \"$TEMP\trispr-ffmpeg.zip\" -DestinationPath \"$TEMP\trispr-ffmpeg-ext\" -Force; Get-ChildItem -Path \"$TEMP\trispr-ffmpeg-ext\" -Filter ffmpeg.exe -Recurse | Where-Object { $_.Directory.Name -eq $\"bin$\" } | Select-Object -First 1 | Copy-Item -Destination \"$INSTDIR\bin\ffmpeg\ffmpeg.exe\""'
-    Pop $0
-    Pop $1
-    ; SHA256 verify
-    nsExec::ExecToStack 'powershell -NoProfile -Command "(Get-FileHash -Path \"$INSTDIR\bin\ffmpeg\ffmpeg.exe\" -Algorithm SHA256).Hash.ToLower()"'
-    Pop $0
-    Pop $2
-    StrCmp $2 "b90225987bdd042cca09a1efb5e34e9848f2d1dbf5fbcd388753a44145522997" FFmpegHashOK
-      IfSilent +2 0
-      MessageBox MB_OK|MB_ICONEXCLAMATION "FFmpeg-Prüfsumme ungültig — Datei möglicherweise beschädigt.$\r$\nBitte FFmpeg manuell installieren."
-      Delete "$INSTDIR\bin\ffmpeg\ffmpeg.exe"
-      Goto FFmpegCleanup
-    FFmpegHashOK:
-      DetailPrint "FFmpeg OK (SHA256 verifiziert, libopus enthalten)"
-    FFmpegCleanup:
-      Delete "$TEMP\trispr-ffmpeg.zip"
-      RMDir /r "$TEMP\trispr-ffmpeg-ext"
-    FFmpegDownloadDone:
-  ${EndIf}
-
-!endif
 
   ; Keep both CUDA and Vulkan runtime folders on disk.
   ; Rationale:

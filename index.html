@@ -23,10 +23,6 @@
          role="status"
          aria-live="assertive"
          aria-atomic="true"></div>
-    <div id="transcribe-announcement" class="sr-only"
-         role="status"
-         aria-live="polite"
-         aria-atomic="true"></div>
     <div id="refining-announcement" class="sr-only"
          role="status"
          aria-live="polite"
@@ -47,11 +43,6 @@
                 <span class="status-dot" id="status-dot" data-state="idle"
                       aria-label="Recording status: idle"></span>
                 <span class="pipe-label">Rec</span>
-              </span>
-              <span class="pipe-item">
-                <span class="status-dot" id="transcribe-dot" data-state="idle"
-                      aria-label="Transcribing status: idle"></span>
-                <span class="pipe-label">Transcribe</span>
               </span>
               <span class="pipe-item">
                 <span class="status-dot" id="refining-dot" data-state="idle"
@@ -147,7 +138,7 @@
           <div class="panel-header">
             <div class="panel-title">
               <h2>Transcription</h2>
-              <p>Latest transcripts. Switch between input and system audio.</p>
+              <p>Latest transcripts.</p>
             </div>
             <div class="panel-actions">
               <button class="panel-collapse-btn"
@@ -164,39 +155,7 @@
           </div>
           <div class="panel-body" id="transcription-panel-body">
             <div class="history-toolbar">
-              <div class="history-tabs">
-                <button id="history-tab-mic" class="history-tab active" title="Show microphone input transcripts" data-settings-visibility-excluded="global-or-navigation">Input</button>
-                <button id="history-tab-system" class="history-tab" title="Show system audio transcripts" data-settings-visibility-excluded="global-or-navigation">System Audio</button>
-                <button id="history-tab-conversation" class="history-tab" title="Show combined conversation view (mic + system audio)" data-settings-visibility-excluded="global-or-navigation">Conv</button>
-              </div>
               <div class="history-toolbar-actions">
-                <div id="history-alias-controls" class="history-alias-controls">
-                  <label class="history-alias-field" for="history-alias-mic-input" data-settings-visibility-managed="true" data-settings-visibility-key="history-alias-mic-input" data-settings-visibility-label="Input history name" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">
-                    <span class="history-alias-label">Input</span>
-                    <input
-                      id="history-alias-mic-input"
-                      class="history-alias-input"
-                      type="text"
-                      maxlength="32"
-                      placeholder="Input"
-                      title="Display name for your microphone in the Conversation view"
-                      aria-label="Conversation name for input source"
-                    />
-                  </label>
-                  <label class="history-alias-field" for="history-alias-system-input" data-settings-visibility-managed="true" data-settings-visibility-key="history-alias-system-input" data-settings-visibility-label="System history name" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">
-                    <span class="history-alias-label">System</span>
-                    <input
-                      id="history-alias-system-input"
-                      class="history-alias-input"
-                      type="text"
-                      maxlength="32"
-                      placeholder="System audio"
-                      title="Display name for system audio in the Conversation view"
-                      aria-label="Conversation name for system audio source"
-                    />
-                  </label>
-                </div>
-                <button id="history-copy-conversation" class="ghost-btn" title="Copy the full conversation to clipboard" data-settings-visibility-managed="true" data-settings-visibility-key="action.history-copy-conversation" data-settings-visibility-label="Copy conversation" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Copy</button>
                 <button
                   id="history-delete-conversation"
                   class="ghost-btn history-delete-btn"
@@ -211,8 +170,6 @@
                   &#128465;
                 </button>
                 <div class="export-controls">
-                  <button id="open-recordings-btn" class="ghost-btn" title="Open recordings folder" data-settings-visibility-managed="true" data-settings-visibility-key="action.open-recordings-btn" data-settings-visibility-label="Open recordings" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Recordings</button>
-                  <button id="archive-browse-btn" class="ghost-btn" title="Browse archived months" data-settings-visibility-managed="true" data-settings-visibility-key="action.archive-browse-btn" data-settings-visibility-label="Browse archive" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Archive</button>
                   <button id="history-export" class="ghost-btn" title="Export transcript" data-settings-visibility-managed="true" data-settings-visibility-key="action.history-export" data-settings-visibility-label="Export transcript" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">Export</button>
                 </div>
                 <div id="conversation-font-controls" class="font-controls" title="Adjust transcript font size for the active tab" data-settings-visibility-managed="true" data-settings-visibility-key="conversation-font-size" data-settings-visibility-label="Transcript font size" data-settings-visibility-default="basic" data-settings-visibility-group="Text Output">
@@ -423,28 +380,12 @@
                 <span id="mic-gain-value" class="range-value" aria-live="polite">+0 dB</span>
               </div>
             </label>
-            <div class="field toggle span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="opus.archive.toggle" data-settings-visibility-label="Aufnahmen archivieren (OPUS)" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
-              <label class="toggle-row">
-                <span class="field-label">Aufnahmen archivieren (OPUS)</span>
-                <input id="opus-archive-toggle" type="checkbox" checked title="Aufnahmen als OPUS-Dateien archivieren" />
-                <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              </label>
-              <span class="toggle-hint">Speichert Aufnahmen als OPUS-Dateien. Deaktivieren spart Speicherplatz.</span>
-            </div>
             <details class="expander span-2" data-expert-only="true">
               <summary>
                 <span>Capture Advanced</span>
                 <span class="expert-pill" aria-hidden="true">Expert</span>
               </summary>
               <div class="expander-content">
-                <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="auto.save.mic.audio.toggle" data-settings-visibility-label="Auto-save mic continuous audio" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
-                  <label class="toggle-row">
-                    <span class="field-label">Auto-save mic continuous audio</span>
-                    <input id="auto-save-mic-audio-toggle" type="checkbox" title="Save Toggle/VAD mic recordings as OPUS files" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Save mic Toggle/VAD sessions as OPUS.</span>
-                </div>
                 <div class="field toggle span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.mic.override.toggle" data-settings-visibility-label="Mic continuous override" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
                   <label class="toggle-row">
                     <span class="field-label">Mic continuous override</span>
@@ -492,6 +433,87 @@
                     <span id="continuous-mic-hard-cut-value" class="range-value" aria-live="polite">45s</span>
                   </div>
                 </label>
+                <label class="field toggle" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.dump.enabled.toggle" data-settings-visibility-label="Intelligent auto-dumping" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
+                  <span class="field-label">Intelligent auto-dumping</span>
+                  <input id="continuous-dump-enabled-toggle" type="checkbox" title="Automatically split and flush long mic recordings" />
+                  <span class="toggle-track">
+                    <span class="toggle-thumb"></span>
+                  </span>
+                </label>
+                <label class="field span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.dump.profile" data-settings-visibility-label="Auto-dump profile" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
+                  <span class="field-label">Auto-dump profile</span>
+                  <select id="continuous-dump-profile" title="Pre-set timing profile for continuous audio splitting">
+                    <option value="balanced">Balanced (recommended)</option>
+                    <option value="low_latency">Low latency</option>
+                    <option value="high_quality">High quality</option>
+                  </select>
+                  <span class="field-hint">Hybrid rules: silence + soft interval + hard cut.</span>
+                </label>
+                    <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.hard.cut" data-settings-visibility-label="Hard cut limit" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
+                      <span class="field-label">Hard cut limit</span>
+                      <div class="range-row">
+                        <input id="continuous-hard-cut" type="range" min="15000" max="120000" step="1000"
+                               title="Maximum mic segment length (seconds)"
+                               aria-valuemin="15000"
+                               aria-valuemax="120000"
+                               aria-valuenow="45000"
+                               aria-label="Continuous hard cut limit"
+                               aria-describedby="continuous-hard-cut-value" />
+                        <span id="continuous-hard-cut-value" class="range-value" aria-live="polite">45s</span>
+                      </div>
+                    </label>
+                    <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.min.chunk" data-settings-visibility-label="Minimum chunk duration" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
+                      <span class="field-label">Minimum chunk duration</span>
+                      <div class="range-row">
+                        <input id="continuous-min-chunk" type="range" min="250" max="5000" step="50"
+                               title="Minimum usable chunk duration (seconds)"
+                               aria-valuemin="250"
+                               aria-valuemax="5000"
+                               aria-valuenow="1000"
+                               aria-label="Continuous minimum chunk duration"
+                               aria-describedby="continuous-min-chunk-value" />
+                        <span id="continuous-min-chunk-value" class="range-value" aria-live="polite">1.0s</span>
+                      </div>
+                    </label>
+                    <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.pre.roll" data-settings-visibility-label="Pre-roll context" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
+                      <span class="field-label">Pre-roll context</span>
+                      <div class="range-row">
+                        <input id="continuous-pre-roll" type="range" min="0" max="1500" step="50"
+                               title="Audio context added before each segment (seconds)"
+                               aria-valuemin="0"
+                               aria-valuemax="1500"
+                               aria-valuenow="300"
+                               aria-label="Continuous pre-roll context"
+                               aria-describedby="continuous-pre-roll-value" />
+                        <span id="continuous-pre-roll-value" class="range-value" aria-live="polite">0.30s</span>
+                      </div>
+                    </label>
+                    <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.post.roll" data-settings-visibility-label="Post-roll context" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
+                      <span class="field-label">Post-roll context</span>
+                      <div class="range-row">
+                        <input id="continuous-post-roll" type="range" min="0" max="1500" step="50"
+                               title="Audio context added after each segment (seconds)"
+                               aria-valuemin="0"
+                               aria-valuemax="1500"
+                               aria-valuenow="200"
+                               aria-label="Continuous post-roll context"
+                               aria-describedby="continuous-post-roll-value" />
+                        <span id="continuous-post-roll-value" class="range-value" aria-live="polite">0.20s</span>
+                      </div>
+                    </label>
+                    <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.keepalive" data-settings-visibility-label="Idle keepalive flush" data-settings-visibility-default="expert" data-settings-visibility-group="Capture">
+                      <span class="field-label">Idle keepalive flush</span>
+                      <div class="range-row">
+                        <input id="continuous-keepalive" type="range" min="10000" max="120000" step="5000"
+                               title="Force a flush after this idle period (seconds)"
+                               aria-valuemin="10000"
+                               aria-valuemax="120000"
+                               aria-valuenow="60000"
+                               aria-label="Continuous idle keepalive flush"
+                               aria-describedby="continuous-keepalive-value" />
+                        <span id="continuous-keepalive-value" class="range-value" aria-live="polite">60s</span>
+                      </div>
+                    </label>
               </div>
             </details>
             <details class="expander span-2" data-expert-only="true">
@@ -561,317 +583,6 @@
               </div>
             </details>
             </div>
-          </div>
-        </section>
-
-        <section class="panel transcribe-panel" data-panel="system" data-default-collapsed="true" data-panel-group="input-source" data-expert-only="true" style="--delay: 0.18s">
-          <div class="panel-header">
-            <div class="panel-title">
-              <h2>System Audio Capture</h2>
-              <p>System audio device, transcribe hotkey, detection settings.</p>
-            </div>
-            <div class="panel-actions">
-              <button class="panel-collapse-btn"
-                      data-panel-collapse="system"
-                      title="Collapse"
-                      aria-expanded="true"
-                      aria-controls="system-panel-body"
-                      aria-label="Collapse system audio capture panel" data-settings-visibility-excluded="global-or-navigation">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px;">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="panel-body" id="system-panel-body" data-settings-visibility-group-container>
-          <div class="panel-grid">
-            <div class="field toggle-with-hint span-2" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.enabled.toggle" data-settings-visibility-label="Enable system audio transcription" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <label class="toggle-row">
-                <span class="field-label">Enable system audio transcription</span>
-                <input id="transcribe-enabled-toggle" type="checkbox" title="Capture and transcribe system audio (speakers/loopback)" />
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
-              </label>
-              <span class="toggle-hint">When disabled, system audio monitoring and transcription are inactive</span>
-            </div>
-            <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.device.select" data-settings-visibility-label="Capture device" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Capture device</span>
-              <select id="transcribe-device-select" title="System audio output device to capture (loopback)"></select>
-            </label>
-            <div class="field hotkey-field span-2" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.hotkey" data-settings-visibility-label="Transcribe hotkey" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Transcribe hotkey</span>
-              <div class="hotkey-input-group">
-                <input id="transcribe-hotkey" type="text" placeholder="CommandOrControl+Shift+T" readonly title="Current system audio transcription hotkey — click Record to change" />
-                <button id="transcribe-hotkey-record" class="hotkey-record-btn" title="Click to record hotkey">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 4px;">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
-                  </svg>
-                  Record
-                </button>
-              </div>
-              <span id="transcribe-hotkey-status" class="hotkey-status"
-                    role="status"
-                    aria-live="polite"></span>
-            </div>
-            <label class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.vad.toggle" data-settings-visibility-label="Voice activation mode" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Voice activation mode</span>
-              <input id="transcribe-vad-toggle" type="checkbox" title="Only transcribe when speech is detected (voice-activated)" />
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-            </label>
-            <label class="field toggle" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.dump.enabled.toggle" data-settings-visibility-label="Intelligent auto-dumping" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Intelligent auto-dumping</span>
-              <input id="continuous-dump-enabled-toggle" type="checkbox" title="Automatically split and flush long system audio recordings" />
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-            </label>
-            <label class="field span-2" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.dump.profile" data-settings-visibility-label="Auto-dump profile" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Auto-dump profile</span>
-              <select id="continuous-dump-profile" title="Pre-set timing profile for continuous audio splitting">
-                <option value="balanced">Balanced (recommended)</option>
-                <option value="low_latency">Low latency</option>
-                <option value="high_quality">High quality</option>
-              </select>
-              <span class="field-hint">Hybrid rules: silence + soft interval + hard cut.</span>
-            </label>
-            <label class="field range" id="transcribe-vad-threshold-field" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.vad.threshold" data-settings-visibility-label="Voice Activation threshold" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Voice Activation threshold</span>
-              <div class="range-row">
-                <input id="transcribe-vad-threshold" type="range" min="-60" max="0" step="1"
-                       title="Minimum volume to trigger system audio transcription (dB)"
-                       aria-valuemin="-60"
-                       aria-valuemax="0"
-                       aria-valuenow="-28"
-                       aria-label="System audio voice activation threshold"
-                       aria-describedby="transcribe-vad-threshold-value" />
-                <span id="transcribe-vad-threshold-value" class="range-value" aria-live="polite">-28 dB</span>
-              </div>
-            </label>
-            <label class="field range" id="transcribe-vad-silence-field" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.vad.silence" data-settings-visibility-label="Silence grace" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Silence grace</span>
-              <div class="range-row">
-                <input id="transcribe-vad-silence" type="range" min="200" max="5000" step="100"
-                       title="Silence duration before system audio recording stops (ms)"
-                       aria-valuemin="200"
-                       aria-valuemax="5000"
-                       aria-valuenow="900"
-                       aria-label="System audio silence grace period"
-                       aria-describedby="transcribe-vad-silence-value" />
-                <span id="transcribe-vad-silence-value" class="range-value" aria-live="polite">0.9s</span>
-              </div>
-            </label>
-            <div class="field span-2">
-              <span class="field-label">System audio level</span>
-              <div class="meter-stack">
-                <div class="meter-row">
-                  <div id="transcribe-meter" class="vad-meter">
-                    <div id="transcribe-meter-fill" class="vad-meter-fill"></div>
-                    <div id="transcribe-meter-threshold" class="meter-threshold-marker"></div>
-                  </div>
-                  <span id="transcribe-meter-db" class="meter-db">-60 dB</span>
-                </div>
-                <div class="meter-scale">
-                  <span>-60</span>
-                  <span>-40</span>
-                  <span>-20</span>
-                  <span>0 dB</span>
-                </div>
-                <div class="meter-threshold-label" id="transcribe-threshold-label">
-                  Threshold: <span id="transcribe-threshold-db">-60 dB</span>
-                </div>
-              </div>
-            </div>
-            <label class="field range span-2" id="transcribe-gain-field" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.gain" data-settings-visibility-label="Input gain" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Input gain</span>
-              <div class="range-row">
-                <input id="transcribe-gain" type="range" min="-30" max="30" step="1"
-                       title="Boost or reduce system audio input level (dB)"
-                       aria-valuemin="-30"
-                       aria-valuemax="30"
-                       aria-valuenow="0"
-                       aria-label="System audio input gain"
-                       aria-describedby="transcribe-gain-value" />
-                <span id="transcribe-gain-value" class="range-value" aria-live="polite">+0 dB</span>
-              </div>
-            </label>
-            <label class="field range" id="transcribe-batch-field" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.batch.interval" data-settings-visibility-label="Soft flush target" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Soft flush target</span>
-              <span class="field-hint">Preferred interval for adaptive flush when no clear silence cut appears.</span>
-              <div class="range-row">
-                <input id="transcribe-batch-interval" type="range" min="4000" max="15000" step="1000"
-                       title="Target segment length for system audio (seconds)"
-                       aria-valuemin="4000"
-                       aria-valuemax="15000"
-                       aria-valuenow="8000"
-                       aria-label="System audio chunk interval"
-                       aria-describedby="transcribe-batch-value" />
-                <span id="transcribe-batch-value" class="range-value" aria-live="polite">8s</span>
-              </div>
-            </label>
-            <label class="field range" id="transcribe-overlap-field" data-expert-only="true" data-settings-visibility-managed="true" data-settings-visibility-key="transcribe.chunk.overlap" data-settings-visibility-label="Context pre-roll" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-              <span class="field-label">Context pre-roll</span>
-              <span class="field-hint">Leading context kept for adaptive segment starts.</span>
-              <div class="range-row">
-                <input id="transcribe-chunk-overlap" type="range" min="0" max="3000" step="250"
-                       title="Audio pre-roll added before each system audio chunk (seconds)"
-                       aria-valuemin="0"
-                       aria-valuemax="3000"
-                       aria-valuenow="1000"
-                       aria-label="System audio chunk overlap duration"
-                       aria-describedby="transcribe-overlap-value" />
-                <span id="transcribe-overlap-value" class="range-value" aria-live="polite">1s</span>
-              </div>
-            </label>
-            <details class="expander span-2" data-expert-only="true">
-              <summary>
-                <span>Advanced</span>
-                <span class="expert-pill" aria-hidden="true">Expert</span>
-              </summary>
-              <div class="expander-content">
-                <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="opus.enabled.toggle" data-settings-visibility-label="Save recordings as OPUS" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <label class="toggle-row">
-                    <span class="field-label">Save recordings as OPUS</span>
-                    <input id="opus-enabled-toggle" type="checkbox" title="Auto-save system audio recordings longer than 10 s as OPUS" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Auto-save recordings longer than 10s.</span>
-                </div>
-                <label class="field" data-settings-visibility-managed="true" data-settings-visibility-key="opus.bitrate.select" data-settings-visibility-label="OPUS bitrate" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">OPUS bitrate</span>
-                  <select id="opus-bitrate-select" title="Audio quality for saved OPUS recordings">
-                    <option value="32">32 kbps (smallest)</option>
-                    <option value="64">64 kbps (recommended)</option>
-                    <option value="96">96 kbps (high quality)</option>
-                    <option value="128">128 kbps (best quality)</option>
-                  </select>
-                  <span class="field-hint">Higher bitrate = better audio quality but larger files</span>
-                </label>
-                <div class="field toggle" data-settings-visibility-managed="true" data-settings-visibility-key="auto.save.system.audio.toggle" data-settings-visibility-label="Auto-save system audio" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <label class="toggle-row">
-                    <span class="field-label">Auto-save system audio</span>
-                    <input id="auto-save-system-audio-toggle" type="checkbox" title="Save system audio chunks as OPUS files" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Save system audio chunks as OPUS.</span>
-                </div>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.hard.cut" data-settings-visibility-label="Hard cut limit" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">Hard cut limit</span>
-                  <div class="range-row">
-                    <input id="continuous-hard-cut" type="range" min="15000" max="120000" step="1000"
-                           title="Maximum system audio segment length (seconds)"
-                           aria-valuemin="15000"
-                           aria-valuemax="120000"
-                           aria-valuenow="45000"
-                           aria-label="Continuous hard cut limit"
-                           aria-describedby="continuous-hard-cut-value" />
-                    <span id="continuous-hard-cut-value" class="range-value" aria-live="polite">45s</span>
-                  </div>
-                </label>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.min.chunk" data-settings-visibility-label="Minimum chunk duration" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">Minimum chunk duration</span>
-                  <div class="range-row">
-                    <input id="continuous-min-chunk" type="range" min="250" max="5000" step="50"
-                           title="Minimum usable chunk duration (seconds)"
-                           aria-valuemin="250"
-                           aria-valuemax="5000"
-                           aria-valuenow="1000"
-                           aria-label="Continuous minimum chunk duration"
-                           aria-describedby="continuous-min-chunk-value" />
-                    <span id="continuous-min-chunk-value" class="range-value" aria-live="polite">1.0s</span>
-                  </div>
-                </label>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.pre.roll" data-settings-visibility-label="Pre-roll context" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">Pre-roll context</span>
-                  <div class="range-row">
-                    <input id="continuous-pre-roll" type="range" min="0" max="1500" step="50"
-                           title="Audio context added before each segment (seconds)"
-                           aria-valuemin="0"
-                           aria-valuemax="1500"
-                           aria-valuenow="300"
-                           aria-label="Continuous pre-roll context"
-                           aria-describedby="continuous-pre-roll-value" />
-                    <span id="continuous-pre-roll-value" class="range-value" aria-live="polite">0.30s</span>
-                  </div>
-                </label>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.post.roll" data-settings-visibility-label="Post-roll context" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">Post-roll context</span>
-                  <div class="range-row">
-                    <input id="continuous-post-roll" type="range" min="0" max="1500" step="50"
-                           title="Audio context added after each segment (seconds)"
-                           aria-valuemin="0"
-                           aria-valuemax="1500"
-                           aria-valuenow="200"
-                           aria-label="Continuous post-roll context"
-                           aria-describedby="continuous-post-roll-value" />
-                    <span id="continuous-post-roll-value" class="range-value" aria-live="polite">0.20s</span>
-                  </div>
-                </label>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.keepalive" data-settings-visibility-label="Idle keepalive flush" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">Idle keepalive flush</span>
-                  <div class="range-row">
-                    <input id="continuous-keepalive" type="range" min="10000" max="120000" step="5000"
-                           title="Force a flush after this idle period (seconds)"
-                           aria-valuemin="10000"
-                           aria-valuemax="120000"
-                           aria-valuenow="60000"
-                           aria-label="Continuous idle keepalive flush"
-                           aria-describedby="continuous-keepalive-value" />
-                    <span id="continuous-keepalive-value" class="range-value" aria-live="polite">60s</span>
-                  </div>
-                </label>
-                <div class="field toggle span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.override.toggle" data-settings-visibility-label="System Audio override" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <label class="toggle-row">
-                    <span class="field-label">System Audio override</span>
-                    <input id="continuous-system-override-toggle" type="checkbox" title="Use custom timing settings for system audio instead of global defaults" />
-                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  </label>
-                  <span class="toggle-hint">Use source-specific dump timings for system audio.</span>
-                </div>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.soft.flush" data-settings-visibility-label="System soft flush" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">System soft flush</span>
-                  <div class="range-row">
-                    <input id="continuous-system-soft-flush" type="range" min="4000" max="30000" step="500"
-                           title="Flush system audio buffer after this silence (seconds)"
-                           aria-valuemin="4000"
-                           aria-valuemax="30000"
-                           aria-valuenow="10000"
-                           aria-label="System soft flush"
-                           aria-describedby="continuous-system-soft-flush-value" />
-                    <span id="continuous-system-soft-flush-value" class="range-value" aria-live="polite">10s</span>
-                  </div>
-                </label>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.silence.flush" data-settings-visibility-label="System silence flush" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">System silence flush</span>
-                  <div class="range-row">
-                    <input id="continuous-system-silence-flush" type="range" min="300" max="5000" step="100"
-                           title="Force a system audio flush after this silence (seconds)"
-                           aria-valuemin="300"
-                           aria-valuemax="5000"
-                           aria-valuenow="1200"
-                           aria-label="System silence flush"
-                           aria-describedby="continuous-system-silence-flush-value" />
-                    <span id="continuous-system-silence-flush-value" class="range-value" aria-live="polite">1.2s</span>
-                  </div>
-                </label>
-                <label class="field range span-2" data-settings-visibility-managed="true" data-settings-visibility-key="continuous.system.hard.cut" data-settings-visibility-label="System hard cut" data-settings-visibility-default="expert" data-settings-visibility-group="System Audio">
-                  <span class="field-label">System hard cut</span>
-                  <div class="range-row">
-                    <input id="continuous-system-hard-cut" type="range" min="15000" max="120000" step="1000"
-                           title="Maximum system audio segment before forced split (seconds)"
-                           aria-valuemin="15000"
-                           aria-valuemax="120000"
-                           aria-valuenow="45000"
-                           aria-label="System hard cut"
-                           aria-describedby="continuous-system-hard-cut-value" />
-                    <span id="continuous-system-hard-cut-value" class="range-value" aria-live="polite">45s</span>
-                  </div>
-                </label>
-              </div>
-            </details>
-          </div>
           </div>
         </section>
 
@@ -1849,23 +1560,6 @@
         </div>
 
         <div class="export-dialog-row">
-          <label class="field toggle">
-            <div class="toggle-row">
-              <span class="field-label">Include Input</span>
-              <input id="export-include-mic" type="checkbox" checked />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            </div>
-          </label>
-          <label class="field toggle">
-            <div class="toggle-row">
-              <span class="field-label">Include System Audio</span>
-              <input id="export-include-system" type="checkbox" checked />
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            </div>
-          </label>
-        </div>
-
-        <div class="export-dialog-row">
           <label class="field">
             <span class="field-label">Format</span>
             <select id="export-dialog-format">
@@ -1887,38 +1581,5 @@
       </div>
     </div>
 
-    <div id="archive-browser" class="auth-modal" hidden>
-      <div id="archive-browser-backdrop" class="auth-modal-backdrop"></div>
-      <div class="auth-modal-card archive-modal-card" role="dialog" aria-modal="true" aria-labelledby="archive-browser-title">
-        <div class="auth-modal-header">
-          <h3 id="archive-browser-title" class="ai-refine-section-title">History Archive</h3>
-          <button id="archive-browser-close" type="button" class="hotkey-record-btn">Close</button>
-        </div>
-
-        <div class="archive-grid">
-          <section class="archive-column">
-            <h4 class="archive-heading">Input</h4>
-            <div id="archive-mic-partitions" class="archive-partition-list"></div>
-            <h4 class="archive-heading">System Audio</h4>
-            <div id="archive-system-partitions" class="archive-partition-list"></div>
-          </section>
-
-          <section class="archive-column archive-column-entries">
-            <div class="archive-head-row">
-              <span id="archive-selection-meta" class="field-hint">No partition selected.</span>
-              <div class="archive-export-controls">
-                <select id="archive-export-format">
-                  <option value="txt">TXT</option>
-                  <option value="md">Markdown</option>
-                  <option value="json">JSON</option>
-                </select>
-                <button id="archive-export-btn" class="hotkey-record-btn" type="button">Export Loaded</button>
-              </div>
-            </div>
-            <div id="archive-entries" class="archive-entries"></div>
-          </section>
-        </div>
-      </div>
-    </div>
   </body>
 </html>

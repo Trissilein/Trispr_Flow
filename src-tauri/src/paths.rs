@@ -90,12 +90,6 @@ pub(crate) fn validate_path_within(path_str: &str, allowed_root: &Path) -> Resul
     Ok(canonical_parent.join(file_name))
 }
 
-pub(crate) fn resolve_recordings_dir(app: &AppHandle) -> PathBuf {
-    let dir = resolve_base_dir(app).join("recordings");
-    let _ = fs::create_dir_all(&dir);
-    dir
-}
-
 pub(crate) fn resolve_modules_dir(app: &AppHandle) -> PathBuf {
     let dir = resolve_base_dir(app).join("modules");
     let _ = fs::create_dir_all(&dir);

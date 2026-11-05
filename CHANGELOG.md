@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **System-audio transcription and recording export**: loopback capture, system history/conversation view, Opus/recording export, session manager and crash-recovery dump, archive browser, FFmpeg bundling/installer page, `opus` module. Old `settings.json` files with the removed fields still load. Mic auto-dump settings stay (moved into the mic "Capture Advanced" block). Plain-text history export stays.
+
 ## [0.9.1] - 2026-11-04
 
 ### Fixed / Changed — leftovers after the lean-down (2026-11-04)

@@ -5,7 +5,6 @@ pub mod lifecycle_coordinator;
 pub mod package;
 pub mod permissions;
 pub mod registry;
-pub mod runtime;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

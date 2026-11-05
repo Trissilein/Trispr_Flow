@@ -6,7 +6,6 @@ import type {
   ModelInfo,
   DownloadProgress,
   QuantizeProgress,
-  HistoryTab,
   OllamaPullProgress,
   OverlayHealthEvent,
   RuntimeDiagnostics,
@@ -30,16 +29,13 @@ export const REMOVED_MODULE_IDS = new Set([
 
 export let settings: Settings | null = null;
 export let history: HistoryEntry[] = [];
-export let transcribeHistory: HistoryEntry[] = [];
 // Runtime session anchor used by export range "session" (resets on app restart).
 export const appRuntimeStartedMs = Date.now();
 export let devices: AudioDevice[] = [];
-export let outputDevices: AudioDevice[] = [];
 export let models: ModelInfo[] = [];
 export const modelProgress = new Map<string, DownloadProgress>();
 export const quantizeProgress = new Map<string, QuantizeProgress>();
 export const ollamaPullProgress = new Map<string, OllamaPullProgress>();
-export let currentHistoryTab: HistoryTab = "mic";
 export let dynamicSustainThreshold: number = 0.01;
 export let startupStatus: StartupStatus | null = null;
 export let runtimeDiagnostics: RuntimeDiagnostics | null = null;
@@ -112,24 +108,12 @@ export function setHistory(newHistory: HistoryEntry[]) {
   history = newHistory;
 }
 
-export function setTranscribeHistory(newHistory: HistoryEntry[]) {
-  transcribeHistory = newHistory;
-}
-
 export function setDevices(newDevices: AudioDevice[]) {
   devices = newDevices;
 }
 
-export function setOutputDevices(newDevices: AudioDevice[]) {
-  outputDevices = newDevices;
-}
-
 export function setModels(newModels: ModelInfo[]) {
   models = newModels;
-}
-
-export function setCurrentHistoryTab(tab: HistoryTab) {
-  currentHistoryTab = tab;
 }
 
 export function setDynamicSustainThreshold(threshold: number) {

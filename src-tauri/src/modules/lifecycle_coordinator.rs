@@ -68,10 +68,6 @@ pub(crate) fn enable_module_actions(
     // ==========================================
     // PHASE C: Reconcile (Reconcile Side-Effects)
     // ==========================================
-    if result.is_ok() && module_id == "opus" {
-        crate::session_manager::set_opus_module_enabled(true);
-    }
-
     let _ = app.emit("settings-changed", snapshot.clone());
     let _ = app.emit("module:state-changed", descriptors);
 
@@ -139,9 +135,6 @@ pub(crate) fn disable_module_actions(
     // PHASE C: Reconcile (Reconcile Side-Effects)
     // ==========================================
     if result.is_ok() {
-        if module_id == "opus" {
-            crate::session_manager::set_opus_module_enabled(false);
-        }
         match module_id.as_str() {
             "ai_refinement" => {
                 crate::audio::force_reset_refinement_activity(app, "forced_reset");

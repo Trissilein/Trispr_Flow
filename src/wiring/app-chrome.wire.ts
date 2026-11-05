@@ -1,6 +1,5 @@
 // Global app chrome wiring (R2 slice 6).
 
-import { invoke } from "@tauri-apps/api/core";
 import { settings } from "../state";
 import * as dom from "../dom-refs";
 import { renderAIFallbackSettingsUi } from "../settings/ai-refinement.settings";
@@ -237,10 +236,6 @@ export function wireAppChrome(): void {
 
   dom.openModulesBtn?.addEventListener("click", () => {
     switchMainTab("modules");
-  });
-
-  dom.openRecordingsBtn?.addEventListener("click", () => {
-    void invoke("open_recordings_directory");
   });
 
   // Hotkey recording functionality + registration status listener

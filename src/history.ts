@@ -2,36 +2,19 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { escapeHtml } from "./utils";
-import type { HistoryEntry, HistoryTab, TopicScore } from "./types";
-import { history, transcribeHistory, currentHistoryTab, setCurrentHistoryTab as setCurrentTab, isRefinementEnabled } from "./state";
+import type { HistoryEntry, TopicScore } from "./types";
+import { history, isRefinementEnabled } from "./state";
 import * as dom from "./dom-refs";
 import { formatTime } from "./ui-helpers";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
-import {
-  getHistoryAliases,
-  getHistoryFontSize,
-} from "./history-preferences";
+import { getHistoryFontSize } from "./history-preferences";
 import {
   buildRefinementWordDiff,
   getRefinementSnapshot,
   type RefinementDiffToken,
   setInspectorFocus,
 } from "./refinement-inspector";
-
-export function buildConversationHistory(): HistoryEntry[] {
-  const combined = [...history, ...transcribeHistory];
-  return combined.sort((a, b) => b.timestamp_ms - a.timestamp_ms);
-}
-
-export function buildConversationText(entries: HistoryEntry[]) {
-  return entries
-    .map((entry) => {
-      const speaker = speakerName(entry);
-      return `[${formatTime(entry.timestamp_ms)}] ${speaker}: ${getPreferredEntryText(entry)}`;
-    })
-    .join("\n");
-}
 
 export type ExportFormat = "txt" | "md" | "json";
 
@@ -64,11 +47,8 @@ function fmtDate(ms: number): string {
 }
 
 function speakerName(entry: HistoryEntry): string {
-  const snapshot = entry.speaker_name?.trim();
-  if (snapshot) return snapshot;
-  const aliases = getHistoryAliases();
-  if (entry.source === "mic") return aliases.mic;
-  return aliases.system;
+  // Legacy entries from the removed system-audio capture keep their old label.
+  return entry.speaker_name?.trim() || (entry.source === "output" ? "System audio" : "Input");
 }
 
 function entryText(entry: HistoryEntry): string {
@@ -782,69 +762,16 @@ function buildHistoryActionButton(action: "copy" | "delete"): HTMLButtonElement 
   return button;
 }
 
-function buildConversationMessage(entry: HistoryEntry, role: "mic" | "system"): HTMLElement {
-  const sender = speakerName(entry);
-
-  const wrapper = document.createElement("article");
-  wrapper.className = `chat-message history-entry chat-message--${role}`;
-  wrapper.dataset.entryId = entry.id;
-
-  const bubble = document.createElement("div");
-  bubble.className = "chat-message-bubble";
-
-  const meta = document.createElement("div");
-  meta.className = "chat-message-meta";
-
-  const senderEl = document.createElement("span");
-  senderEl.className = "chat-message-sender";
-  senderEl.textContent = sender;
-
-  const timeEl = document.createElement("span");
-  timeEl.className = "chat-message-time";
-  timeEl.textContent = formatTime(entry.timestamp_ms);
-
-  const metaRight = document.createElement("span");
-  metaRight.className = "chat-message-meta-right";
-
-  const actions = document.createElement("span");
-  actions.className = "history-actions chat-message-actions";
-  actions.append(
-    buildHistoryActionButton("copy"),
-    buildHistoryActionButton("delete")
-  );
-
-  metaRight.append(timeEl, buildRefinementChip(entry), actions);
-
-  meta.append(senderEl, metaRight);
-
-  const textPresentation = buildEntryTextPresentation(entry, "chat-message-text");
-  bubble.append(meta, textPresentation.element);
-  wrapper.appendChild(bubble);
-  return wrapper;
-}
-
 function applyActiveHistoryFontSize(): number {
-  const fontSize = getHistoryFontSize(currentHistoryTab);
+  const fontSize = getHistoryFontSize();
   document.documentElement.style.setProperty("--history-active-font-size", `${fontSize}px`);
   return fontSize;
 }
 
 export function syncHistoryToolbarState(): void {
-  const isConversation = currentHistoryTab === "conversation";
-
-  if (dom.historyCopyConversation) {
-    dom.historyCopyConversation.style.display = isConversation ? "inline-flex" : "none";
-  }
-  if (dom.historyAliasControls) {
-    dom.historyAliasControls.style.display = isConversation ? "inline-flex" : "none";
-  }
   if (dom.conversationFontControls) {
     dom.conversationFontControls.style.display = "inline-flex";
   }
-
-  const aliases = getHistoryAliases();
-  if (dom.historyAliasMicInput) dom.historyAliasMicInput.value = aliases.mic;
-  if (dom.historyAliasSystemInput) dom.historyAliasSystemInput.value = aliases.system;
 
   const fontSize = applyActiveHistoryFontSize();
   if (dom.conversationFontSize) {
@@ -860,26 +787,16 @@ export function renderHistory() {
   if (!dom.historyList) return;
   const historyList = dom.historyList;
   syncHistoryToolbarState();
-  let dataset =
-    currentHistoryTab === "mic"
-      ? history
-      : currentHistoryTab === "system"
-        ? transcribeHistory
-        : buildConversationHistory();
+  let dataset = history;
 
   // Apply search and topic filters
   dataset = filterEntriesBySearch(dataset);
   dataset = filterEntriesByTopic(dataset);
 
   if (!dataset.length) {
-    const emptyIcon = currentHistoryTab === "mic" ? "🎤" : currentHistoryTab === "system" ? "🔊" : "💬";
-    const emptyTitle = currentHistoryTab === "conversation" ? "No conversation yet" : "No transcripts yet";
-    const emptyMessage =
-      currentHistoryTab === "mic"
-        ? "Start dictating to build your input history."
-        : currentHistoryTab === "system"
-          ? "Start system audio capture to build your system audio history."
-          : "Build input or system audio entries to generate the conversation view.";
+    const emptyIcon = "🎤";
+    const emptyTitle = "No transcripts yet";
+    const emptyMessage = "Start dictating to build your input history.";
     historyList.innerHTML =
       `<div class="empty-state compact">
         <div class="empty-state-icon">${emptyIcon}</div>
@@ -890,18 +807,6 @@ export function renderHistory() {
   }
 
   historyList.innerHTML = "";
-
-  if (currentHistoryTab === "conversation") {
-    const systemEntryIds = new Set(transcribeHistory.map((e) => e.id));
-    const feed = document.createElement("div");
-    feed.className = "chat-feed";
-    dataset.forEach((entry) => {
-      const role = systemEntryIds.has(entry.id) ? "system" : "mic";
-      feed.appendChild(buildConversationMessage(entry, role));
-    });
-    historyList.appendChild(feed);
-    return;
-  }
 
   const visible = dataset.slice(0, _historyVisibleCount);
   const remaining = dataset.length - visible.length;
@@ -933,17 +838,7 @@ export function renderHistory() {
     const meta = document.createElement("div");
     meta.className = "history-meta";
     const metaText = document.createElement("span");
-    if (currentHistoryTab === "conversation") {
-      const speaker =
-        entry.source === "output"
-          ? "System audio"
-          : entry.source && entry.source !== "local"
-            ? `Input (${entry.source})`
-            : "Input";
-      metaText.textContent = `${formatTime(entry.timestamp_ms)} · ${speaker}`;
-    } else {
-      metaText.textContent = `${formatTime(entry.timestamp_ms)} · ${entry.source}`;
-    }
+    metaText.textContent = `${formatTime(entry.timestamp_ms)} · ${entry.source}`;
     meta.append(metaText, buildRefinementChip(entry));
 
     textWrap.appendChild(meta);
@@ -1001,7 +896,7 @@ export function initHistoryDelegation(): void {
 
       const action = button.dataset.action;
       if (action === "copy") {
-        const entry = [...history, ...transcribeHistory].find((item) => item.id === entryId);
+        const entry = history.find((item) => item.id === entryId);
         if (entry) {
           const text = buildEntryTextPresentation(entry, "history-text").displayText;
           navigator.clipboard.writeText(text).catch(() => {});
@@ -1033,12 +928,4 @@ export function initHistoryDelegation(): void {
       }
     }
   });
-}
-
-export function setHistoryTab(tab: HistoryTab) {
-  setCurrentTab(tab);
-  if (dom.historyTabMic) dom.historyTabMic.classList.toggle("active", tab === "mic");
-  if (dom.historyTabSystem) dom.historyTabSystem.classList.toggle("active", tab === "system");
-  if (dom.historyTabConversation) dom.historyTabConversation.classList.toggle("active", tab === "conversation");
-  scheduleHistoryRender();
 }

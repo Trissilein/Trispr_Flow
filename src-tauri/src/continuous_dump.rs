@@ -135,17 +135,6 @@ impl AdaptiveSegmenter {
         self.cfg = cfg;
     }
 
-    #[cfg(target_os = "windows")]
-    pub fn set_backpressure_percent(&mut self, percent_used: u8) {
-        self.backpressure_scale = if percent_used >= 90 {
-            1.35
-        } else if percent_used >= 80 {
-            1.2
-        } else {
-            1.0
-        };
-    }
-
     pub fn push_samples(&mut self, samples: &[i16], level: f32) -> Vec<SegmentOutput> {
         if samples.is_empty() {
             return Vec::new();

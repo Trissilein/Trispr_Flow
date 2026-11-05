@@ -14,13 +14,6 @@ vi.hoisted(() => {
     <span id="continuous-post-roll-value"></span>
     <input id="continuous-keepalive" />
     <span id="continuous-keepalive-value"></span>
-    <input id="continuous-system-override-toggle" type="checkbox" />
-    <input id="continuous-system-soft-flush" />
-    <span id="continuous-system-soft-flush-value"></span>
-    <input id="continuous-system-silence-flush" />
-    <span id="continuous-system-silence-flush-value"></span>
-    <input id="continuous-system-hard-cut" />
-    <span id="continuous-system-hard-cut-value"></span>
     <input id="continuous-mic-override-toggle" type="checkbox" />
     <input id="continuous-mic-soft-flush" />
     <span id="continuous-mic-soft-flush-value"></span>
@@ -29,11 +22,6 @@ vi.hoisted(() => {
     <input id="continuous-mic-hard-cut" />
     <span id="continuous-mic-hard-cut-value"></span>
 
-    <input id="opus-enabled-toggle" type="checkbox" />
-    <input id="opus-archive-toggle" type="checkbox" />
-    <select id="opus-bitrate-select"><option value="64">64</option><option value="96">96</option></select>
-    <input id="auto-save-system-audio-toggle" type="checkbox" />
-    <input id="auto-save-mic-audio-toggle" type="checkbox" />
 
     <input id="postproc-enabled" type="checkbox" />
     <div id="postproc-settings"></div>
@@ -55,7 +43,6 @@ import {
   renderContinuousDumpSettings,
 } from "../settings/continuous-dump.settings";
 import { renderPostProcessingSettings } from "../settings/post-processing.settings";
-import { renderRecordingQualitySettings } from "../settings/recording-quality.settings";
 import { setSettings } from "../state";
 import type { Settings } from "../types";
 
@@ -72,18 +59,10 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     continuous_pre_roll_ms: 200,
     continuous_post_roll_ms: 150,
     continuous_idle_keepalive_ms: 45000,
-    continuous_system_override_enabled: true,
-    continuous_system_soft_flush_ms: 8000,
-    continuous_system_silence_flush_ms: 900,
-    continuous_system_hard_cut_ms: 30000,
     continuous_mic_override_enabled: true,
     continuous_mic_soft_flush_ms: 9000,
     continuous_mic_silence_flush_ms: 1100,
     continuous_mic_hard_cut_ms: 35000,
-    opus_enabled: false,
-    opus_bitrate_kbps: 96,
-    auto_save_system_audio: true,
-    auto_save_mic_audio: true,
     postproc_enabled: true,
     postproc_language: "de",
     postproc_punctuation_enabled: true,
@@ -109,7 +88,6 @@ describe("renderContinuousDumpSettings", () => {
     expect(byId("continuous-hard-cut-value").textContent).toBe("30s");
     expect(byId("continuous-min-chunk-value").textContent).toBe("0.8s");
     expect(byId("continuous-pre-roll-value").textContent).toBe("0.20s");
-    expect(byId("continuous-system-silence-flush-value").textContent).toBe("0.9s");
     expect(byId("continuous-mic-hard-cut-value").textContent).toBe("35s");
   });
 
@@ -119,17 +97,6 @@ describe("renderContinuousDumpSettings", () => {
     renderContinuousDumpSettings();
     expect(byId<HTMLSelectElement>("continuous-dump-profile").value).toBe("balanced");
     expect(byId("continuous-hard-cut-value").textContent).toBe("45s");
-  });
-});
-
-describe("renderRecordingQualitySettings", () => {
-  it("renders opus and auto-save controls", () => {
-    renderRecordingQualitySettings();
-    expect(byId<HTMLInputElement>("opus-enabled-toggle").checked).toBe(false);
-    expect(byId<HTMLInputElement>("opus-archive-toggle").checked).toBe(false);
-    expect(byId<HTMLSelectElement>("opus-bitrate-select").value).toBe("96");
-    expect(byId<HTMLInputElement>("auto-save-system-audio-toggle").checked).toBe(true);
-    expect(byId<HTMLInputElement>("auto-save-mic-audio-toggle").checked).toBe(true);
   });
 });
 

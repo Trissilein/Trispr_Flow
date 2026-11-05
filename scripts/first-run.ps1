@@ -6,7 +6,6 @@
 .DESCRIPTION
   - Installs npm dependencies (unless skipped).
   - Tries to hydrate missing Whisper runtime folders from an installed Trispr Flow app.
-  - Tries to hydrate bundled FFmpeg from an installed Trispr Flow app.
   - Reports runtime readiness for transcription and model quantization.
 
 .EXAMPLE
@@ -55,8 +54,6 @@ function Get-RuntimeStatus {
   $vulkanCli = Join-Path $BinRoot "vulkan\whisper-cli.exe"
   $vulkanServer = Join-Path $BinRoot "vulkan\whisper-server.exe"
   $quantize = Join-Path $BinRoot "quantize.exe"
-  $ffmpeg = Join-Path $BinRoot "ffmpeg\ffmpeg.exe"
-  $ffmpegOnPath = [bool](Get-Command ffmpeg -ErrorAction SilentlyContinue)
 
   $envCliPath = ""
   $envCliReady = $false
@@ -74,8 +71,6 @@ function Get-RuntimeStatus {
     vulkan_cli = Test-File $vulkanCli
     vulkan_server = Test-File $vulkanServer
     quantize = Test-File $quantize
-    ffmpeg_local = Test-File $ffmpeg
-    ffmpeg_on_path = $ffmpegOnPath
     env_cli_ready = $envCliReady
     env_cli_path = $envCliPath
   }
@@ -96,7 +91,6 @@ function Get-RuntimeStatus {
     $status.cuda_cublaslt -and
     $status.cuda_cudart
   )
-  $status["ffmpeg_ready"] = ($status.ffmpeg_local -or $status.ffmpeg_on_path)
 
   return [PSCustomObject]$status
 }
@@ -184,13 +178,12 @@ function Hydrate-RuntimeFromInstalledApp {
     $copiedCuda = Copy-DirIfExists (Join-Path $candidateBin "cuda") (Join-Path $BinRoot "cuda")
     $copiedVulkan = Copy-DirIfExists (Join-Path $candidateBin "vulkan") (Join-Path $BinRoot "vulkan")
     $copiedQuantize = Copy-FileIfExists (Join-Path $candidateBin "quantize.exe") (Join-Path $BinRoot "quantize.exe")
-    $copiedFfmpeg = Copy-FileIfExists (Join-Path $candidateBin "ffmpeg\ffmpeg.exe") (Join-Path $BinRoot "ffmpeg\ffmpeg.exe")
 
-    if ($copiedCuda -or $copiedVulkan -or $copiedQuantize -or $copiedFfmpeg) {
+    if ($copiedCuda -or $copiedVulkan -or $copiedQuantize) {
       $copiedAnything = $true
       Write-Info "Copied runtime files from installed app."
     } else {
-      Write-Warn "Candidate had no expected files (cuda/vulkan/quantize/ffmpeg)."
+      Write-Warn "Candidate had no expected files (cuda/vulkan/quantize)."
     }
   }
 
@@ -231,7 +224,6 @@ Write-Info ("Transcription runtime ready: {0}" -f $status.transcription_ready)
 Write-Info ("Recommended CUDA+Vulkan runtime complete: {0}" -f $status.recommended_runtime_complete)
 Write-Info ("CUDA runtime complete (including cublasLt64_13.dll): {0}" -f $status.cuda_runtime_complete)
 Write-Info ("Quantize binary ready: {0}" -f $status.quantize)
-Write-Info ("FFmpeg ready (local or PATH): {0}" -f $status.ffmpeg_ready)
 if ($status.env_cli_ready) {
   Write-Info ("External TRISPR_WHISPER_CLI detected: {0}" -f $status.env_cli_path)
 }
@@ -254,11 +246,6 @@ if (-not $status.quantize) {
 
 if ($status.cuda_cli -and -not $status.cuda_runtime_complete) {
   Write-Warn "CUDA runtime is incomplete (missing cublas/cublasLt/cudart DLLs). CUDA backend may fail and should fall back to Vulkan."
-}
-
-if (-not $status.ffmpeg_ready) {
-  Write-Warn "FFmpeg missing. OPUS save/merge requires ffmpeg with libopus support."
-  Write-Host "  Fix: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-ffmpeg.ps1"
 }
 
 Write-Host ""

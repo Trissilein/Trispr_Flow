@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Managed Ollama runtime pin** moves from 0.40.13 to 0.40.14 (new compiled-in SHA-256 from the official GitHub release; other versions still resolve from GitHub).
+- **Frontend tooling**: Vite 6 → 8, Vitest 4 → 5, jsdom 28 → 29, TypeScript 5.6 → 5.9. Vitest 5 needs Node 22.12+, so the CI/release workflows now use Node 22. `.vitest/` is gitignored.
+
 ### Removed
 
 - **Modules tab and module system**: `src-tauri/src/modules/`, the Modules tab and config modal, `module-sidecars/` and the module commands/events are gone. AI Refinement is now a plain setting (`ai_fallback.enabled`); the AI Refinement tab is always shown. Old `settings.json` files with `module_settings` still load (the block is ignored and not written back).

@@ -3,7 +3,7 @@ import { resolve } from "path";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
-const rootDir = resolve(__dirname);
+const rootDir = resolve(import.meta.dirname);
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({

@@ -2,7 +2,7 @@ import type { ZebraAction, ZebraChip, ZebraColumn, ZebraRow } from "./ollama-zeb
 import type { OllamaRuntimeVersionInfo } from "./types";
 
 /** The pinned, recommended runtime (same value as `DEFAULT_RUNTIME_VERSION` in ollama_runtime.rs). */
-export const DEFAULT_RUNTIME_VERSION = "0.40.13";
+export const DEFAULT_RUNTIME_VERSION = "0.40.14";
 
 /** Targets older releases wrote as their default: not a user choice, so they move to the recommended one. */
 export const LEGACY_RUNTIME_TARGET_VERSIONS: readonly string[] = ["0.20.2"];

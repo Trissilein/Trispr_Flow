@@ -44,7 +44,7 @@ function Parse-InstallerMetadata {
 
   $match = [regex]::Match(
     $Name,
-    '^TrsprFlw\.v(?<version>\d+\.\d+\.\d+)\.(?<variant>vulkan-only|cuda-lite|cuda-complete)-(?<stamp>\d{2}\.\d{2}\.-\d{2}\.\d{2}(?:-\d{2})?)\.exe$'
+    '^TrsprFlw\.v(?<version>\d+\.\d+\.\d+)\.(?<variant>mini|full)\.exe$'
   )
   if (-not $match.Success) {
     return $null
@@ -53,7 +53,6 @@ function Parse-InstallerMetadata {
   [PSCustomObject]@{
     Version = $match.Groups['version'].Value
     Variant = $match.Groups['variant'].Value
-    Stamp   = $match.Groups['stamp'].Value
   }
 }
 
@@ -82,7 +81,6 @@ if ($LatestPerVariant) {
         File    = $file
         Version = $meta.Version
         Variant = $meta.Variant
-        Stamp   = $meta.Stamp
       }
     }
   )

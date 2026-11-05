@@ -22,7 +22,7 @@ It is designed for local-first transcription and editing workflows:
 ## Current Release
 
 - Current app line: `v0.9.1`
-- Packaging: unified Windows installer flow (vulkan-only / cuda-lite / cuda-complete)
+- Packaging: Windows installer in two variants (`mini`, `full`), unsigned
 - Current focus: **lean core** (dictation, Ollama refinement, history, vocabulary). The 2026-11-02 lean-down removed cloud providers, LM Studio/Oobabooga, TTS/Piper, video generation, the assistant, GDD/Confluence, task capture and benchmarks (see [CHANGELOG.md](CHANGELOG.md))
 
 Release details:
@@ -59,10 +59,12 @@ Release details:
 ### Users
 1. Download the latest release from [GitHub Releases](https://github.com/Trissilein/Trispr_Flow/releases).
 2. Choose an installer variant:
-   - `*.vulkan-only-*.exe` (smallest, no CUDA payload)
-   - `*.cuda-lite-*.exe` (CUDA without `cublasLt64_13.dll`, Vulkan fallback included)
-   - `*.cuda-complete-*.exe` (full CUDA payload including `cublasLt64_13.dll`)
-3. Open **AI Refinement** in-app to install/start local Ollama runtime and download models.
+   - `TrsprFlw.v<version>.mini.exe` (small; the setup wizard downloads the speech engine and models on first start)
+   - `TrsprFlw.v<version>.full.exe` (CUDA + Vulkan speech engines bundled; the setup wizard only downloads models)
+3. The installers are unsigned: in Windows SmartScreen click **More info**, then **Run anyway**.
+4. The setup wizard installs the local Ollama runtime and models for AI refinement (skippable); later via **AI Refinement** in-app.
+
+Details: [docs/INSTALLER_VARIANTS.md](docs/INSTALLER_VARIANTS.md).
 
 ### Quick start (dev checkout)
 Double-click `start-trispr-flow.vbs` in the repo root. It runs `npm run dev` with no console window, rebuilds changed code on its own and exits quietly if Trispr Flow is already running.
@@ -74,11 +76,11 @@ cd Trispr_Flow
 scripts\windows\FIRST_RUN.bat
 ```
 
-Compatibility wrappers remain in root (`FIRST_RUN.bat`, `build_unified.bat`, `rebuild-installer.bat`, `build-quantize.bat`).
+Compatibility wrappers remain in root (`FIRST_RUN.bat`, `rebuild-installer.bat`, `build-quantize.bat`).
 
 Installer build/upload shortcuts:
-- `build_installers.bat` (build all variants)
-- `upload_release_assets.bat -Tag vX.Y.Z -CreateReleaseIfMissing -Clobber` (upload latest `vulkan-only`/`cuda-lite`/`cuda-complete` assets for that tag via GitHub CLI)
+- `build_installers.bat` (build `mini` + `full`)
+- `upload_release_assets.bat -Tag vX.Y.Z -CreateReleaseIfMissing -Clobber` (upload the `mini`/`full` assets for that tag via GitHub CLI)
 
 ## Status and Roadmap
 

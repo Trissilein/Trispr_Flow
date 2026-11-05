@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   - Installs npm dependencies (unless skipped).
-  - Tries to hydrate missing Whisper runtime folders from an installed Trispr Flow app.
+  - Fetches the pinned Whisper runtime (CUDA + Vulkan) from the runtime manifest: download, SHA-256 check, unpack.
   - Reports runtime readiness for transcription and model quantization.
 
 .EXAMPLE
@@ -95,102 +95,19 @@ function Get-RuntimeStatus {
   return [PSCustomObject]$status
 }
 
-function Copy-DirIfExists([string]$SourceDir, [string]$TargetDir) {
-  if (-not (Test-Dir $SourceDir)) {
-    return $false
-  }
-  New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
-  Copy-Item -Path (Join-Path $SourceDir "*") -Destination $TargetDir -Recurse -Force
-  return $true
-}
-
-function Copy-FileIfExists([string]$SourceFile, [string]$TargetFile) {
-  if (-not (Test-File $SourceFile)) {
-    return $false
-  }
-  $targetDir = Split-Path -Parent $TargetFile
-  if ($targetDir) {
-    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-  }
-  Copy-Item -Path $SourceFile -Destination $TargetFile -Force
-  return $true
-}
-
-function Get-ResourceBinCandidates {
-  $candidates = New-Object System.Collections.Generic.List[string]
-
-  if ($env:LOCALAPPDATA) {
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr Flow\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr_Flow\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\trispr-flow\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\com.trispr.flow\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr Flow\resources\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Trispr_Flow\resources\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\trispr-flow\resources\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\com.trispr.flow\resources\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Trispr Flow\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "Trispr Flow\resources\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "com.trispr.flow\bin"))
-    $candidates.Add((Join-Path $env:LOCALAPPDATA "com.trispr.flow\resources\bin"))
-
-    $programsRoot = Join-Path $env:LOCALAPPDATA "Programs"
-    if (Test-Dir $programsRoot) {
-      Get-ChildItem -Path $programsRoot -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match "(?i)trispr" } |
-        ForEach-Object {
-          $candidates.Add((Join-Path $_.FullName "bin"))
-          $candidates.Add((Join-Path $_.FullName "resources\bin"))
-        }
-    }
-  }
-  if ($env:ProgramFiles) {
-    $candidates.Add((Join-Path $env:ProgramFiles "Trispr Flow\bin"))
-    $candidates.Add((Join-Path $env:ProgramFiles "Trispr Flow\resources\bin"))
-    $candidates.Add((Join-Path $env:ProgramFiles "Trispr_Flow\bin"))
-    $candidates.Add((Join-Path $env:ProgramFiles "Trispr_Flow\resources\bin"))
-  }
-  if (${env:ProgramFiles(x86)}) {
-    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr Flow\bin"))
-    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr Flow\resources\bin"))
-    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr_Flow\bin"))
-    $candidates.Add((Join-Path ${env:ProgramFiles(x86)} "Trispr_Flow\resources\bin"))
-  }
-
-  return ($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
-}
-
-function Hydrate-RuntimeFromInstalledApp {
+function Hydrate-RuntimeFromManifest {
   Write-Section "Runtime Hydration"
-  $candidates = Get-ResourceBinCandidates
-  if (-not $candidates -or $candidates.Count -eq 0) {
-    Write-Warn "No install candidate paths could be constructed."
+  if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Warn "node not found on PATH; cannot fetch the pinned whisper runtime."
     return $false
   }
-
-  $copiedAnything = $false
-  foreach ($candidateBin in $candidates) {
-    Write-Info "Checking candidate: $candidateBin"
-    if (-not (Test-Dir $candidateBin)) {
-      continue
-    }
-
-    Write-Info "Found installed runtime candidate: $candidateBin"
-    $copiedCuda = Copy-DirIfExists (Join-Path $candidateBin "cuda") (Join-Path $BinRoot "cuda")
-    $copiedVulkan = Copy-DirIfExists (Join-Path $candidateBin "vulkan") (Join-Path $BinRoot "vulkan")
-    $copiedQuantize = Copy-FileIfExists (Join-Path $candidateBin "quantize.exe") (Join-Path $BinRoot "quantize.exe")
-
-    if ($copiedCuda -or $copiedVulkan -or $copiedQuantize) {
-      $copiedAnything = $true
-      Write-Info "Copied runtime files from installed app."
-    } else {
-      Write-Warn "Candidate had no expected files (cuda/vulkan/quantize)."
-    }
+  # Downloads the zips from the pinned manifest, verifies SHA-256 and unpacks into src-tauri\bin\{cuda,vulkan}.
+  & node (Join-Path $ScriptDir "fetch-whisper-runtime.mjs") --variants cuda,vulkan
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warn "Runtime fetch failed with exit code $LASTEXITCODE."
+    return $false
   }
-
-  if (-not $copiedAnything) {
-    Write-Warn "No runtime files were copied from local installations."
-  }
-  return $copiedAnything
+  return $true
 }
 
 Set-Location $RepoRoot
@@ -212,7 +129,7 @@ if (-not $SkipNpmInstall) {
 }
 
 if (-not $SkipRuntimeHydration) {
-  [void](Hydrate-RuntimeFromInstalledApp)
+  [void](Hydrate-RuntimeFromManifest)
 } else {
   Write-Section "Runtime Hydration"
   Write-Info "Skipped by parameter."

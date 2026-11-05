@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Managed Ollama runtime pin** moves from 0.40.13 to 0.40.14 (new compiled-in SHA-256 from the official GitHub release; other versions still resolve from GitHub).
 - **Frontend tooling**: Vite 6 → 8, Vitest 4 → 5, jsdom 28 → 29, TypeScript 5.6 → 5.9. Vitest 5 needs Node 22.12+, so the CI/release workflows now use Node 22. `.vitest/` is gitignored.
+- **Installer: two variants, `mini` and `full`** (`TrsprFlw.v<ver>.mini.exe` / `.full.exe`, unsigned). `mini` ships the app + `quantize.exe` only (the setup wizard downloads the speech engine and models on first start); `full` bundles the CUDA and Vulkan whisper runtimes (`bin/cuda`, `bin/vulkan`). The NSIS wizard is English only, the AI-refinement checkbox is on by default, silent installs (`/S`) use the same defaults, and the `mini` summary page points to the first-start download.
+- **Pinned whisper.cpp v1.9.5 runtime**: `scripts/fetch-whisper-runtime.mjs` downloads the zips from `src-tauri/runtime-manifests/whisper-runtime-1.9.5.json` (URL + SHA-256), unpacks only the manifest-listed files and validates each by length + SHA-256; a failed run leaves no partial directory. Unit tests: `npm run test:scripts`.
+- **Release workflow**: a `v*` tag builds `mini` + `full` without manual inputs (runtime from the manifest URL, SHA-checked, tag must match `package.json`) and attaches both installers to the release.
 
 ### Removed
 
@@ -18,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Settings-visibility editor**: `settings-visibility*.ts`, the per-setting Basic/Expert profile (localStorage) and all `data-settings-visibility-*` markup. The Expert toggle stays; the advanced controls the editor hid by default are now marked `data-expert-only`.
 - **Repo cleanup**: `project-spec/`, `scripts/legacy/`, the Ollama soak script, root `.bat` wrappers, `GEMINI.md`, old v0.6/v0.7 plan docs, `docs/MODULE-PUBLISHING.md`; Piper/FFmpeg/Opus sections of `docs/INSTALLER_VARIANTS.md`.
 - **Dependencies**: `image` and `rfd` crates dropped (tray icon decode uses Tauri `image-png`, file dialogs use `tauri-plugin-dialog`), Tauri `x11` feature, unused `windows` feature, `rollup` devDependency.
+- **Old installer variants** `vulkan-only`, `cuda-lite`, `cuda-complete` (and the `unified` alias), the hydration from previously published installers / `runtime-seed-cuda13`, `scripts/hydrate-*.ps1`, `scripts/validate-whisper-runtime.mjs`, `scripts/validate-runtime-manifest.mjs`, `scripts/windows/build_unified.bat` and `runtime-manifests/vulkan-v0.8.4-hotfix.json`.
 
 - **System-audio transcription and recording export**: loopback capture, system history/conversation view, Opus/recording export, session manager and crash-recovery dump, archive browser, FFmpeg bundling/installer page, `opus` module. Old `settings.json` files with the removed fields still load. Mic auto-dump settings stay (moved into the mic "Capture Advanced" block). Plain-text history export stays.
 

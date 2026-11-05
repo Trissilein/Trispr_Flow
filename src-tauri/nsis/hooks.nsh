@@ -1,30 +1,31 @@
 ; Trispr Flow NSIS Installer Hooks
-; Wizard: Hardware/Variant info, Component selection, First-run config, Summary.
+; Wizard: System info, Startup options, Recording mode, Summary.
 ; This file is included at the top level of the installer script by Tauri.
+; Variants: "mini" (app only, setup wizard downloads the speech engine) and
+;           "full" (bundles bin\cuda + bin\vulkan).
 
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
 !include "WinMessages.nsh"
 
-; Load variant define written by build-installers.bat
+; Load variant define written by scripts/generate-tauri-variant-config.mjs (build-installers.bat).
 ; Use ${__FILEDIR__} to resolve relative to hooks.nsh directory, not installer.nsi temp dir
-!include "${__FILEDIR__}\variant-define.nsh"
+!include /NONFATAL "${__FILEDIR__}\variant-define.nsh"
 
-; Fallback to "vulkan" if variant-define.nsh was not found
+; Fallback to "full" (matches the base tauri.conf.json resource list) if the define was not generated
 !ifndef TRISPR_VARIANT
-  !define TRISPR_VARIANT "vulkan"
+  !define TRISPR_VARIANT "full"
 !endif
 
-; Variant display: uppercase version for UI
-!if "${TRISPR_VARIANT}" == "vulkan"
-  !define TRISPR_VARIANT_DISPLAY "VULKAN"
-!else if "${TRISPR_VARIANT}" == "cuda-lite"
-  !define TRISPR_VARIANT_DISPLAY "CUDA (lite)"
-!else if "${TRISPR_VARIANT}" == "cuda-complete"
-  !define TRISPR_VARIANT_DISPLAY "CUDA (complete, offline)"
+!if "${TRISPR_VARIANT}" == "mini"
+  !define TRISPR_VARIANT_DISPLAY "Mini"
+  !define TRISPR_VARIANT_NOTE "Compact installer. The speech engine is not bundled."
 !else
-  !define TRISPR_VARIANT_DISPLAY "${TRISPR_VARIANT}"
+  !define TRISPR_VARIANT_DISPLAY "Full (CUDA + Vulkan)"
+  !define TRISPR_VARIANT_NOTE "Both speech engines (CUDA and Vulkan) are bundled. The app picks the best one for your GPU."
 !endif
+
+!define TRISPR_NO_NVIDIA "No NVIDIA GPU detected"
 
 ; =====================================================================
 ; Variable declarations
@@ -35,7 +36,7 @@ Var HardwareDialog
 Var DetectedGpuStr
 
 
-; Page 3: First-run config
+; Page 2: Startup options
 Var FirstRunDialog
 Var CheckAIRefinement
 Var RadioHal
@@ -46,10 +47,10 @@ Var AIRefinementSelected
 Var OverlayStyleChoice
 Var CaptureModeChoice
 
-; Page 4: Capture Mode
+; Page 3: Recording mode
 Var CaptureModeDialog
 
-; Page 5: Summary
+; Page 4: Summary
 Var SummaryDialog
 Var SummaryLabel
 Var SummaryFont
@@ -64,12 +65,12 @@ Page custom CaptureModeConfigPage CaptureModeConfigPageLeave
 Page custom HardwareSummaryPage
 
 ; =====================================================================
-; Page 1: Hardware / Variant Info
+; GPU detection (informational): first NVIDIA display adapter in the registry.
+; Also called from the post-install hook, because silent installs skip the pages.
 ; =====================================================================
 
-Function HardwareVariantPage
-  ; Detect NVIDIA GPU via registry
-  StrCpy $DetectedGpuStr "Keine NVIDIA GPU erkannt"
+Function DetectNvidiaGpu
+  StrCpy $DetectedGpuStr "${TRISPR_NO_NVIDIA}"
   StrCpy $0 0
   GpuScanLoop:
     IntFmt $1 "%04i" $0
@@ -89,6 +90,14 @@ Function HardwareVariantPage
     IntOp $0 $0 + 1
     IntCmp $0 10 GpuScanDone GpuScanLoop GpuScanDone
   GpuScanDone:
+FunctionEnd
+
+; =====================================================================
+; Page 1: System Info
+; =====================================================================
+
+Function HardwareVariantPage
+  Call DetectNvidiaGpu
 
   nsDialogs::Create 1018
   Pop $HardwareDialog
@@ -96,54 +105,36 @@ Function HardwareVariantPage
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 20u "System-Erkennung"
+  ${NSD_CreateLabel} 0 0 100% 16u "System detection"
   Pop $0
   SetCtlColors $0 "" 0xffffff
   CreateFont $1 "Segoe UI" 11 700
   SendMessage $0 ${WM_SETFONT} $1 1
 
-  ${NSD_CreateLabel} 0 26u 100% 14u "Erkannte GPU:"
+  ${NSD_CreateLabel} 0 24u 100% 10u "Detected GPU:"
   Pop $0
-  ${NSD_CreateLabel} 0 40u 100% 14u "$DetectedGpuStr"
-  Pop $0
-
-  ${NSD_CreateLabel} 0 62u 100% 14u "Diese Installer-Variante:"
+  ${NSD_CreateLabel} 0 35u 100% 10u "$DetectedGpuStr"
   Pop $0
 
-  ; Variant text in uppercase
-  !if "${TRISPR_VARIANT}" == "vulkan"
-    StrCpy $R0 "VULKAN"
-  !else if "${TRISPR_VARIANT}" == "cuda-lite"
-    StrCpy $R0 "CUDA (lite)"
-  !else if "${TRISPR_VARIANT}" == "cuda-complete"
-    StrCpy $R0 "CUDA (complete, offline)"
-  !else
-    StrCpy $R0 "${TRISPR_VARIANT}"
-  !endif
-  ${NSD_CreateLabel} 0 76u 100% 14u "$R0"
+  ${NSD_CreateLabel} 0 54u 100% 10u "Installer variant:"
+  Pop $0
+  ${NSD_CreateLabel} 0 65u 100% 10u "${TRISPR_VARIANT_DISPLAY}"
+  Pop $0
+  ${NSD_CreateLabel} 0 78u 100% 20u "${TRISPR_VARIANT_NOTE}"
   Pop $0
 
-  ; CUDA hint for NVIDIA GPU on Vulkan variant
-  !if "${TRISPR_VARIANT}" == "vulkan"
-    StrCmp $DetectedGpuStr "Keine NVIDIA GPU erkannt" no_cuda_hint
-      ${NSD_CreateLabel} 0 92u 100% 20u "Hinweis: Für NVIDIA GPUs steht ein optimierter CUDA-Installer zur Verfügung (cuda-lite)."
-      Pop $0
-      SetCtlColors $0 "ff8800" transparent
-    no_cuda_hint:
-  !endif
-
-  ${NSD_CreateLabel} 0 118u 100% 30u "Im nächsten Schritt kannst du auswählen, welche zusätzlichen Komponenten heruntergeladen werden sollen."
+  ${NSD_CreateLabel} 0 104u 100% 20u "The next steps set your startup options."
   Pop $0
 
   nsDialogs::Show
 FunctionEnd
 
 Function HardwareVariantPageLeave
-  ; Nothing to capture — informational page only
+  ; Nothing to capture - informational page only
 FunctionEnd
 
 ; =====================================================================
-; Page 3: First-run Configuration
+; Page 2: Startup Options
 ; =====================================================================
 
 Function FirstRunConfigPage
@@ -153,29 +144,32 @@ Function FirstRunConfigPage
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 20u "Startverhalten"
+  ${NSD_CreateLabel} 0 0 100% 16u "Startup options"
   Pop $0
   CreateFont $1 "Segoe UI" 11 700
   SendMessage $0 ${WM_SETFONT} $1 1
 
-  ${NSD_CreateLabel} 0 26u 100% 12u "KI-Verfeinerung (lokal, verwaltete Ollama-Runtime):"
+  ${NSD_CreateLabel} 0 20u 100% 10u "AI refinement (local, managed Ollama runtime):"
   Pop $0
 
-  ${NSD_CreateCheckbox} 10u 40u 100% 13u "KI-Verfeinerung direkt aktivieren"
+  ${NSD_CreateCheckbox} 10u 32u 100% 12u "Enable AI refinement"
   Pop $CheckAIRefinement
-  ; Default: unchecked. The app downloads its managed Ollama runtime + model on first launch (setup wizard).
+  ; Default: checked (restored from the earlier choice when the user navigates back).
+  ${If} $AIRefinementSelected != "0"
+    ${NSD_SetState} $CheckAIRefinement ${BST_CHECKED}
+  ${EndIf}
 
-  ${NSD_CreateLabel} 22u 54u 95% 36u "Verbessert Transkripte mit lokalem KI-Modell: Satzzeichen, Rephrasing, Prompt-Stile (präzise, Meeting, casual). Runtime und Modell (mehrere GB) lädt die App beim ersten Start selbst."
+  ${NSD_CreateLabel} 22u 46u 95% 34u "Fixes punctuation and wording with a local AI model (prompt styles: precise, meeting, casual). The setup wizard downloads the runtime and model (several GB) on first start; you can skip it there."
   Pop $0
 
-  ${NSD_CreateLabel} 0 96u 100% 12u "Overlay-Stil (jederzeit in den App-Einstellungen änderbar):"
+  ${NSD_CreateLabel} 0 84u 100% 10u "Overlay style (changeable later in the app settings):"
   Pop $0
 
-  ${NSD_CreateRadioButton} 10u 110u 100% 13u "HAL 9000 — pulsierender Kreis"
+  ${NSD_CreateRadioButton} 10u 96u 100% 12u "HAL 9000 - pulsing circle"
   Pop $RadioHal
   ${NSD_SetState} $RadioHal ${BST_CHECKED}
 
-  ${NSD_CreateRadioButton} 10u 125u 100% 13u "KITT — Leuchtbalken"
+  ${NSD_CreateRadioButton} 10u 110u 100% 12u "KITT - light bar"
   Pop $RadioKitt
 
   nsDialogs::Show
@@ -198,7 +192,7 @@ Function FirstRunConfigPageLeave
 FunctionEnd
 
 ; =====================================================================
-; Page 4: Capture Mode Configuration
+; Page 3: Recording Mode
 ; =====================================================================
 
 Function CaptureModeConfigPage
@@ -208,20 +202,20 @@ Function CaptureModeConfigPage
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 20u "Aufnahme-Modus"
+  ${NSD_CreateLabel} 0 0 100% 16u "Recording mode"
   Pop $0
   CreateFont $1 "Segoe UI" 11 700
   SendMessage $0 ${WM_SETFONT} $1 1
 
-  ${NSD_CreateLabel} 0 26u 100% 12u "Wie soll die Aufnahme ausgelöst werden?"
+  ${NSD_CreateLabel} 0 24u 100% 10u "How should recording be triggered?"
   Pop $0
 
-  ${NSD_CreateRadioButton} 10u 42u 100% 13u "Push-to-Talk (PTT) — empfohlen"
+  ${NSD_CreateRadioButton} 10u 40u 100% 12u "Push-to-talk (PTT) - recommended"
   Pop $RadioPtt
   ${NSD_AddStyle} $RadioPtt ${WS_GROUP}
   ${NSD_SetState} $RadioPtt ${BST_CHECKED}
 
-  ${NSD_CreateRadioButton} 10u 57u 100% 13u "Voice Activation — automatische Aufnahme bei Sprache"
+  ${NSD_CreateRadioButton} 10u 55u 100% 12u "Voice activation - records automatically when you speak"
   Pop $RadioVad
 
   nsDialogs::Show
@@ -237,7 +231,7 @@ Function CaptureModeConfigPageLeave
 FunctionEnd
 
 ; =====================================================================
-; Page 5: Summary (read-only confirmation)
+; Page 4: Summary (read-only confirmation)
 ; =====================================================================
 
 Function HardwareSummaryPage
@@ -247,44 +241,63 @@ Function HardwareSummaryPage
     Abort
   ${EndIf}
 
-  ${NSD_CreateLabel} 0 0 100% 20u "Zusammenfassung"
+  ${NSD_CreateLabel} 0 0 100% 16u "Summary"
   Pop $0
   CreateFont $1 "Segoe UI" 11 700
   SendMessage $0 ${WM_SETFONT} $1 1
 
-  StrCpy $R0 "GPU:              $DetectedGpuStr$\r$\nVariante:         ${TRISPR_VARIANT_DISPLAY}$\r$\n"
+  StrCpy $R0 "GPU:            $DetectedGpuStr$\r$\nInstaller:      ${TRISPR_VARIANT_DISPLAY}$\r$\n"
 
-  ${If} $DetectedGpuStr != "Keine NVIDIA GPU erkannt"
-    StrCpy $R0 "$R0GPU-Modus:       High Performance (NVIDIA) konfiguriert$\r$\n"
+  ${If} $DetectedGpuStr != "${TRISPR_NO_NVIDIA}"
+    StrCpy $R0 "$R0GPU mode:       High performance (NVIDIA)$\r$\n"
   ${EndIf}
 
   ${If} $AIRefinementSelected == "1"
-    StrCpy $R0 "$R0KI-Verfeinerung:  Aktiviert (Download beim ersten Start)$\r$\n"
+    StrCpy $R0 "$R0AI refinement:  On (downloads on first start)$\r$\n"
   ${Else}
-    StrCpy $R0 "$R0KI-Verfeinerung:  Deaktiviert$\r$\n"
+    StrCpy $R0 "$R0AI refinement:  Off$\r$\n"
   ${EndIf}
-  StrCpy $R0 "$R0Overlay:          $OverlayStyleChoice$\r$\nAufnahme:         $CaptureModeChoice$\r$\n"
+  StrCpy $R0 "$R0Overlay:        $OverlayStyleChoice$\r$\nRecording:      $CaptureModeChoice$\r$\n"
 
-  ${NSD_CreateLabel} 0 26u 100% 150u "$R0"
+  ${NSD_CreateLabel} 0 20u 100% 56u "$R0"
   Pop $SummaryLabel
   CreateFont $SummaryFont "Consolas" 9 400
   SendMessage $SummaryLabel ${WM_SETFONT} $SummaryFont 1
 
-  ${NSD_CreateLabel} 0 160u 100% 20u "Klick auf 'Installieren' zum Starten."
+  !if "${TRISPR_VARIANT}" == "mini"
+    ${NSD_CreateLabel} 0 80u 100% 20u "The setup wizard downloads the speech engine and models on first start."
+    Pop $0
+  !endif
+
+  ${NSD_CreateLabel} 0 104u 100% 10u "Click 'Install' to start."
   Pop $0
 
-  ${NSD_CreateLabel} 0 185u 100% 14u "Logs findest du später unter: %LOCALAPPDATA%\Trispr Flow\logs\"
+  ${NSD_CreateLabel} 0 115u 100% 10u "Logs: %LOCALAPPDATA%\Trispr Flow\logs\"
   Pop $0
 
   nsDialogs::Show
 FunctionEnd
 
 ; =====================================================================
-; Post-install: write settings and on-demand downloads
+; Post-install: write settings and GPU preferences
 ; =====================================================================
 
 !macro NSIS_HOOK_POSTINSTALL
-  ; Resolve %LOCALAPPDATA% — matches Rust paths.rs which uses LOCALAPPDATA\Trispr Flow
+  ; Silent installs (/S) skip the custom pages: apply the same defaults the pages preselect.
+  ${If} $DetectedGpuStr == ""
+    Call DetectNvidiaGpu
+  ${EndIf}
+  ${If} $AIRefinementSelected == ""
+    StrCpy $AIRefinementSelected "1"
+  ${EndIf}
+  ${If} $OverlayStyleChoice == ""
+    StrCpy $OverlayStyleChoice "dot"
+  ${EndIf}
+  ${If} $CaptureModeChoice == ""
+    StrCpy $CaptureModeChoice "ptt"
+  ${EndIf}
+
+  ; Resolve %LOCALAPPDATA% - matches Rust paths.rs which uses LOCALAPPDATA\Trispr Flow
   ExpandEnvStrings $R9 "%LOCALAPPDATA%"
   StrCpy $R8 "$R9\Trispr Flow"
 
@@ -303,7 +316,7 @@ FunctionEnd
   FileWrite $0 '"topic_keywords":{"technical":["code","coding","debug","debugging","bug","error","stacktrace","exception","function","variable","api","endpoint","database","sql","query","schema","deploy","deployment","build","compile","performance","latency","memory","thread","integration","schnittstelle","fehler","datenbank","abfrage","bereitstellung","leistung","speicher","konfiguration","version","docker","kubernetes"],"meeting":["meeting","agenda","minutes","action","action item","deadline","owner","follow-up","stakeholder","alignment","decision","next step","roadmap","priority","milestone","planning","sync","standup","retrospective","workshop","besprechung","termin","protokoll","entscheidung","naechster schritt","prioritaet","meilenstein","planung","abstimmung","aufgabe","verantwortlich","rueckmeldung","review"],"personal":["personal","note","reminder","todo","to-do","follow-up","errand","appointment","family","health","habit","journal","private","vacation","shopping","budget","finance","bank","insurance","medicine","persoenlich","erinnerung","notiz","einkauf","urlaub","arzt","haushalt","konto","rechnung","gesundheit","routine","privat","aufraeumen"]},'
   FileWrite $0 '"model":"whisper-large-v3-turbo",'
 
-  ; AI Refinement + module_settings — conditional on wizard choice
+  ; AI Refinement + module_settings - conditional on wizard choice
   ${If} $AIRefinementSelected == "1"
     FileWrite $0 '"module_settings":{"enabled_modules":["ai_refinement"],"consented_permissions":{},"module_overrides":{}},'
     FileWrite $0 '"ai_fallback":{"enabled":true,"provider":"ollama","preserve_source_language":true,"model":"gemma4:e4b","temperature":0.3,"max_tokens":4000,"custom_prompt_enabled":false,"custom_prompt":"Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.","use_default_prompt":true},'
@@ -374,23 +387,10 @@ FunctionEnd
   ; ----------------------------------------------------------------
   ; Set Windows DirectX GPU preference to "High Performance" for all whisper binaries
   ; This ensures NVIDIA dGPU is used on hybrid graphics systems instead of Intel iGPU
-  ${If} $DetectedGpuStr != "Keine NVIDIA GPU erkannt"
+  ${If} $DetectedGpuStr != "${TRISPR_NO_NVIDIA}"
     WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\cuda\whisper-cli.exe" "GpuPreference=2;"
     WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\cuda\whisper-server.exe" "GpuPreference=2;"
     WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\vulkan\whisper-cli.exe" "GpuPreference=2;"
     WriteRegStr HKCU "Software\Microsoft\DirectX\UserGpuPreferences" "$INSTDIR\bin\vulkan\whisper-server.exe" "GpuPreference=2;"
   ${EndIf}
-
-  ; ----------------------------------------------------------------
-  ; Core runtime downloads (skipped for cuda-complete: already bundled)
-  ; ----------------------------------------------------------------
-
-  ; Keep both CUDA and Vulkan runtime folders on disk.
-  ; Rationale:
-  ; - Hybrid GPU/Optimus systems can report CUDA availability late.
-  ; - quantize.exe may need runtime DLLs from either backend folder.
-  ; Runtime backend selection is handled by app diagnostics/settings.
-
-  Goto SkipPostInstall
-  SkipPostInstall:
 !macroend

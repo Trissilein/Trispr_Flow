@@ -1,92 +1,56 @@
 # Trispr Flow - Installer Variants
 
-Last updated: 2026-03-27
+Windows x64 only (NVIDIA CUDA or any Vulkan GPU). The installers are **unsigned**.
 
-This document describes the current Windows installer packaging in Trispr Flow mainline.
+## Variants
+
+| Variant | File | Size | Contents |
+| --- | --- | --- | --- |
+| `mini` | `TrsprFlw.v<ver>.mini.exe` | ~4.5 MB | App + `quantize.exe`. The setup wizard downloads the speech engine (CUDA or Vulkan runtime) and the models on first start. |
+| `full` | `TrsprFlw.v<ver>.full.exe` | ~477 MB | App + `quantize.exe` + both speech engines (`bin\cuda`, `bin\vulkan`). The setup wizard only downloads models. |
+
+Both variants offer the same wizard pages: system info, startup options (AI refinement is on by default), recording mode, summary.
+AI refinement uses the app-managed Ollama runtime and `gemma4:e4b`; the setup wizard downloads both on first start and the user can skip that step.
 
 ## Installed Layout
 
-- The NSIS installer materializes bundled runtime payloads under `<install-dir>\bin\...`.
-- Current important paths:
-  - `<install-dir>\bin\cuda`
-  - `<install-dir>\bin\vulkan`
-  - `<install-dir>\bin\quantize.exe`
-- Older tooling sometimes assumed `<install-dir>\resources\bin\...`; that is now treated only as a legacy fallback for hydration/bootstrap logic.
+- `<install-dir>\bin\quantize.exe` (both variants)
+- `<install-dir>\bin\cuda`, `<install-dir>\bin\vulkan` (`full` only)
 
-## Mainline Packaging (Three Variants)
+Backend choice happens at runtime (`local_backend_preference`: `auto|cuda|vulkan`); an incomplete or failing CUDA runtime falls back to Vulkan/CPU.
 
-- Config: `src-tauri/tauri.conf.json`
-- NSIS hooks: `src-tauri/nsis/hooks.nsh`
-- Installer flow: 5-page wizard (Hardware info → Components → First-run config → Capture mode → Summary).
-- Output variants:
-  - `vulkan-only`: Whisper Vulkan runtime only.
-  - `cuda-lite`: Whisper CUDA runtime (no `cublasLt64_13.dll`) + Vulkan.
-  - `cuda-complete`: Whisper CUDA + Vulkan runtime bundled offline.
+## SmartScreen
 
-### Variant Size Targets
+The installers are not code-signed, so Windows SmartScreen shows "Windows protected your PC" on first run.
+Click **More info**, then **Run anyway**.
 
-| Variant | Target | Notes |
-| --- | --- | --- |
-| `vulkan-only` | ~30-40 MB | Whisper Vulkan + quantize only |
-| `cuda-lite` | ~120 MB | + CUDA DLLs (no cublasLt) |
-| `cuda-complete` | ~510-560 MB | Offline core payload |
+## Whisper Runtime (pinned)
 
-Backend choice is made at runtime via diagnostics + settings (`local_backend_preference`: `auto|cuda|vulkan`).
-With runtime preflight enabled, incomplete CUDA payloads are skipped and app falls back to Vulkan/CPU chain.
+- Manifest: `src-tauri/runtime-manifests/whisper-runtime-1.9.5.json` (whisper.cpp v1.9.5, CUDA 13 + Vulkan).
+- Per variant it lists the zip `url` + `zip_sha256` (GitHub release `whisper-runtime-v1.9.5`) and the exact file list `files[]` (length + SHA-256).
+- `node scripts/fetch-whisper-runtime.mjs [--variants cuda,vulkan] [--bin-dir <dir>] [--verify-only] [--force]` downloads the zip, checks its hash, unpacks only manifest-listed files into `src-tauri/bin/{cuda,vulkan}`, and validates every file. A failed run never replaces an existing directory. Tests: `npm run test:scripts`.
+- `src-tauri/bin/cuda` and `src-tauri/bin/vulkan` are gitignored; only `bin/quantize.exe` is tracked.
 
-## Ollama Runtime + Dependencies
-
-- Ollama runtime is managed by the app and installed per-user on demand (`%LOCALAPPDATA%\TrisprFlow\ollama-runtime\...`).
-- Ollama models are intentionally **not** bundled in installers; they are pulled/imported via the in-app model manager.
-- The managed runtime includes its own dependency tree (`lib/ollama`, `cuda_v12`, `cuda_v13`, `vulkan`).
-- We do **not** mix Whisper CUDA DLLs into Ollama runtime folders and do **not** rely on Ollama DLLs for Whisper.
-- CUDA runtime must include `cublasLt64_13.dll` (alongside `cublas64_13.dll` and `cudart64_13.dll`) to avoid loader failures on systems without globally installed CUDA runtime DLLs.
-
-## Build Commands
+## Build
 
 ```bat
-scripts\windows\build-installers.bat
+scripts\windows\build-installers.bat            rem mini + full
+scripts\windows\build-installers.bat mini       rem one variant
 ```
 
-Compatibility wrapper:
-- `build_installers.bat` (repo root)
-- `rebuild-installer.bat` (repo root)
+- `full` fetches the runtimes from the manifest first (skipped when `src-tauri/bin/{cuda,vulkan}` already match).
+- `scripts/generate-tauri-variant-config.mjs --variant <mini|full|ci>` writes the per-variant Tauri config (resource list) and `src-tauri/nsis/variant-define.nsh` (compile-time variant for `hooks.nsh`). `ci` strips all runtime payload for `cargo check/test` on runners.
+- Output: `installers\TrsprFlw.v<ver>.mini.exe` and `installers\TrsprFlw.v<ver>.full.exe`.
+- After each build the script silently installs the result into a temp folder and checks the payload (`scripts\windows\validate-installed-installer.ps1`). Set `TRISPR_SKIP_INSTALL_VALIDATION=1` to skip.
+- `CARGO_TARGET_DIR` is honored when locating the NSIS bundle.
 
-Outputs are written to `installers/` with variant suffixes (`vulkan-only`, `cuda-lite`, `cuda-complete`).
+## Release
 
-Optional release upload (local machine):
+- Tag `vX.Y.Z` triggers `.github/workflows/windows-release-installers.yml`: it checks the tag against `package.json`, fetches the runtimes from the manifest (SHA-256 checked), builds `mini` and `full`, uploads both as workflow artifact and attaches them to the release. No manual inputs.
+- Local release: `release.bat` (bump, build, tag, push, upload via `scripts\windows\upload-release-assets.ps1`).
+- Bumping the runtime: publish the new zips as a new `whisper-runtime-v<ver>` release, add a new manifest file and point the manifest defaults in `scripts/fetch-whisper-runtime.mjs` and `scripts/windows/validate-installed-installer.ps1` at it.
 
-```bat
-upload_release_assets.bat -Tag vX.Y.Z -CreateReleaseIfMissing -Clobber
-```
+## Ollama
 
-By default, the uploader selects the newest artifact per variant (`vulkan-only`, `cuda-lite`, `cuda-complete`) for the given tag.  
-To upload all files matching a glob, pass `-LatestPerVariant:$false`.
-
-`release.bat` now pushes the branch and tag before it creates/uploads the GitHub release. That order matters because `gh release create --verify-tag` expects the tag to exist remotely.
-
-## GitHub Actions Release Build
-
-- Workflow: `.github/workflows/windows-release-installers.yml`
-- Purpose: build all Windows installer variants on tag push and upload them to the matching GitHub release.
-- Constraint: Whisper runtime payloads are ignored in git (`src-tauri/bin/cuda`, `src-tauri/bin/vulkan`) and are therefore missing on GitHub runners.
-- Solution: the workflow now runs `scripts/hydrate-whisper-runtime-from-release.ps1` before `build-installers.bat`.
-  - It downloads a published installer asset from the latest non-draft/non-prerelease release.
-  - It skips the current tag when the workflow is building `vX.Y.Z`.
-  - It performs a silent install into a temp directory, copies `bin/cuda`, `bin/vulkan`, and `bin/quantize.exe` into `src-tauri/bin`, and validates the payload before the actual build starts.
-- Result: the runner no longer depends on local untracked binaries and can reproduce the installer build from a clean checkout.
-
-### v0.8.3 Vulkan Hotfix Payload
-
-The v0.8.3 Vulkan hotfix uses a verified local Vulkan payload package instead of the previous published installer payload. The previous v0.8.2 Vulkan runtime reproduces the AMD inference crash, so hydrating Vulkan from that installer would rebuild the failure into the hotfix.
-
-Local package evidence lives under ignored benchmark output:
-
-- `bench/results/trispr-flow-v0.8.3-vulkan-runtime-20260610.zip`
-- `bench/results/trispr-flow-v0.8.3-vulkan-runtime-20260610.manifest.json`
-
-For the v0.8.3 build, hydrate or copy `src-tauri/bin/vulkan` from that package, then run `node scripts/validate-whisper-runtime.mjs --variant vulkan` before building installers.
-
-Field verification on 2026-06-14 showed the published `TrsprFlw.v0.8.3.vulkan-only-12.06.-12.09.exe` asset did not contain this payload. The installed `bin/vulkan` folder had stale February 2026 binaries, did not include `whisper-server.exe`, and reproduced the AMD Vulkan crash. The local manifest-matching payload passed direct CLI and server smoke after being copied manually into the installed app. Treat the current published `v0.8.3` Vulkan-only installer as not fixed until the release asset is rebuilt or replaced and its installed payload is hash-validated.
-
-Once a fixed installer is published and validated, the normal published-installer hydration chain becomes valid again for later releases.
+- Ollama is managed by the app and installed per user on demand; models are never bundled in installers.
+- Whisper CUDA DLLs and Ollama DLLs are never mixed.

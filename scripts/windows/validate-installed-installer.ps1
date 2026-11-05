@@ -3,7 +3,10 @@ param(
   [Alias("ExePath")]
   [Parameter(Mandatory = $true)]
   [string]$InstallerPath,
-  [string]$ManifestPath = "src-tauri\runtime-manifests\vulkan-v0.8.4-hotfix.json",
+  [Parameter(Mandatory = $true)]
+  [ValidateSet("mini", "full")]
+  [string]$Variant,
+  [string]$ManifestPath = "src-tauri\runtime-manifests\whisper-runtime-1.9.5.json",
   [string]$InstallRoot = "",
   [string]$ModelPath = "",
   [string]$FixturePath = "bench\fixtures\short\short_de_like.wav",
@@ -121,10 +124,10 @@ function Restore-Shortcuts {
   }
 }
 
-function Invoke-ManifestValidation([string]$Root, [string]$Label) {
-  & node (Join-Path $RepoRoot "scripts\validate-runtime-manifest.mjs") --manifest $ManifestFullPath --root $Root --label $Label
+function Invoke-ManifestValidation([string]$BinRoot, [string]$Runtime) {
+  & node (Join-Path $RepoRoot "scripts\fetch-whisper-runtime.mjs") --verify-only --manifest $ManifestFullPath --bin-dir $BinRoot --variants $Runtime
   if ($LASTEXITCODE -ne 0) {
-    throw "$Label failed manifest validation."
+    throw "Installed $Runtime runtime failed manifest validation."
   }
 }
 
@@ -200,10 +203,23 @@ try {
     throw "Installer exited with code $($installerProcess.ExitCode)."
   }
 
-  $vulkanRoot = Join-Path $InstallRoot "bin\vulkan"
-  Write-Section "Validating installed Vulkan payload"
-  Invoke-ManifestValidation -Root $vulkanRoot -Label "installed-vulkan"
-  Invoke-CliSmoke -VulkanRoot $vulkanRoot
+  $binRoot = Join-Path $InstallRoot "bin"
+  if (-not (Test-Path -LiteralPath (Join-Path $binRoot "quantize.exe") -PathType Leaf)) {
+    throw "bin\quantize.exe missing from installed payload."
+  }
+  if ($Variant -eq "full") {
+    Write-Section "Validating installed CUDA + Vulkan payload (full)"
+    Invoke-ManifestValidation -BinRoot $binRoot -Runtime "cuda"
+    Invoke-ManifestValidation -BinRoot $binRoot -Runtime "vulkan"
+    Invoke-CliSmoke -VulkanRoot (Join-Path $binRoot "vulkan")
+  } else {
+    Write-Section "Validating installed payload (mini: no bundled runtime)"
+    foreach ($runtime in @("cuda", "vulkan")) {
+      if (Test-Path -LiteralPath (Join-Path $binRoot $runtime)) {
+        throw "mini installer must not contain bin\$runtime."
+      }
+    }
+  }
 
   Write-Host "`nInstalled installer validation completed successfully." -ForegroundColor Green
 } finally {

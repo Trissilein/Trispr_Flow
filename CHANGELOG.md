@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Speech engine troubleshooting and manual import** (setup wizard, engine step): when the download or the self-test fails, a "Troubleshooting" panel shows "What went wrong" and "What you can do" (offline/DNS, TLS or proxy, HTTP status, damaged download, disk full, access denied or antivirus, stalled or cut connection, engine in use) plus Retry and "Copy diagnostics" (app version, OS, GPU detection, engine, error code and text, engine folder as `%LOCALAPPDATA%\...`; no settings, no user name). "Download it yourself" lists both packages (recommended first, with "Which one do I need?", file name, size, copyable SHA-256), "Open download page" opens the pinned release asset in the browser, and "Use downloaded file..." picks the `.zip` and runs it through the same pipeline as the download (SHA-256 and size against the compiled-in pin first, only the pinned files, staging folder, atomic swap, then the same self-test; CUDA failing falls back to Vulkan). A package of the other variant is named ("This is the Vulkan package, but you selected NVIDIA CUDA."); a wrong or manipulated file changes nothing on disk. New commands: `import_whisper_runtime_zip`, `get_whisper_runtime_manual_info`, `open_runtime_download_page` (only the pinned `github.com/Trissilein/Trispr_Flow/releases/...` URLs, started with `cmd /c start`, no new dependency), `get_whisper_runtime_diagnostics`; `download_whisper_runtime` now returns a structured `{code, message, hint, detail}` error.
+- **"Open setup" for a missing speech engine**: the startup "Missing Runtime Dependencies" toast and the "Transcription Failed" toast get an "Open setup" button that opens the wizard with only the engine step (also in the `mini` layout, long after the first start).
+
 ## [0.10.0] - 2026-11-05
 
 ### Added

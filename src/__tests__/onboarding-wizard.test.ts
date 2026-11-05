@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   setupRefinementInBackground: vi.fn(async () => {}),
   showToast: vi.fn(),
   setupHotkeyRecorder: vi.fn(),
+  openDialog: vi.fn(),
+  writeText: vi.fn(async (_text: string) => {}),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
@@ -37,6 +39,7 @@ vi.mock("../settings-persist", () => ({ persistSettings: mocks.persistSettings }
 vi.mock("../ollama-models", () => ({ setupRefinementInBackground: mocks.setupRefinementInBackground }));
 vi.mock("../toast", () => ({ showToast: mocks.showToast }));
 vi.mock("../hotkeys", () => ({ setupHotkeyRecorder: mocks.setupHotkeyRecorder }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.openDialog }));
 
 function emit(name: string, payload: unknown): void {
   for (const cb of mocks.listeners.get(name) ?? []) void cb({ payload });
@@ -57,6 +60,46 @@ function status(opts: { cuda?: boolean; vulkan?: boolean; bundled?: boolean }) {
   const variants = [variant("cuda", Boolean(opts.cuda)), variant("vulkan", Boolean(opts.vulkan))];
   return { variants, any_ready: variants.some((v) => v.ready), whisper_cpp_version: "v1.9.5", runtime_dir: "C:\\r" };
 }
+
+const MANUAL_INFO = {
+  release_page_url: "https://github.com/Trissilein/Trispr_Flow/releases/tag/whisper-runtime-v1.9.5",
+  whisper_cpp_version: "v1.9.5",
+  variants: [
+    {
+      variant: "cuda",
+      label: "NVIDIA CUDA",
+      asset: "whisper-runtime-cuda-win64.zip",
+      url: "https://github.com/Trissilein/Trispr_Flow/releases/download/whisper-runtime-v1.9.5/whisper-runtime-cuda-win64.zip",
+      size_mb: 486,
+      size_bytes: 509_246_371,
+      sha256: "7eb328951a8362db0213feecede812928165eb2cafa331a85fe5c41af465f67c",
+      which_gpu_hint: "NVIDIA GeForce RTX, or GTX 16 series and newer, with a current driver (version 580 or newer).",
+    },
+    {
+      variant: "vulkan",
+      label: "Vulkan",
+      asset: "whisper-runtime-vulkan-win64.zip",
+      url: "https://github.com/Trissilein/Trispr_Flow/releases/download/whisper-runtime-v1.9.5/whisper-runtime-vulkan-win64.zip",
+      size_mb: 15,
+      size_bytes: 15_711_052,
+      sha256: "af6ced49ace46690ef890d63cd6324a1e832533995f941f86b80b7b6379c07d9",
+      which_gpu_hint: "Everything else: Intel and AMD graphics, older NVIDIA cards, or when CUDA does not work on your PC.",
+    },
+  ],
+};
+
+const DIAGNOSTICS = {
+  app_version: "0.10.0",
+  os: "Windows 10.0.26300",
+  arch: "x86_64",
+  runtime_dir: "%LOCALAPPDATA%\\Trispr Flow\\runtime",
+  whisper_cpp_version: "v1.9.5",
+  adapters: [{ vendor_id: "0x10DE", name: "NVIDIA GeForce RTX 5070 Ti" }],
+  variants: [
+    { variant: "cuda", bundled: false, downloaded: false },
+    { variant: "vulkan", bundled: false, downloaded: false },
+  ],
+};
 
 const NVIDIA = {
   recommended: "cuda",
@@ -88,6 +131,10 @@ async function boot(scenario: Scenario) {
   mocks.invoke.mockReset();
   mocks.persistSettings.mockClear();
   mocks.setupRefinementInBackground.mockClear();
+  mocks.openDialog.mockReset();
+  mocks.writeText.mockReset();
+  mocks.writeText.mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: mocks.writeText }, configurable: true });
 
   const wizard = new DOMParser().parseFromString(indexHtml, "text/html").getElementById("onboarding-wizard");
   document.body.innerHTML = wizard!.outerHTML;
@@ -99,6 +146,9 @@ async function boot(scenario: Scenario) {
     verify_whisper_runtime: (args) => ({ variant: args?.variant, ok: true, detail: "ok", fallback_variant: null }),
     download_whisper_runtime: () => scenario.runtime,
     download_model: () => undefined,
+    get_whisper_runtime_manual_info: () => MANUAL_INFO,
+    get_whisper_runtime_diagnostics: () => DIAGNOSTICS,
+    open_runtime_download_page: () => undefined,
     ...scenario.handlers,
   };
   mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
@@ -112,7 +162,7 @@ async function boot(scenario: Scenario) {
   const wizardModule = await import("../onboarding-wizard");
   await wizardModule.initOnboardingWizard();
   await flush();
-  return { state };
+  return { state, wizardModule };
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -205,7 +255,7 @@ describe("setup wizard", () => {
     expect($<HTMLButtonElement>("wizard-next-btn").disabled).toBe(false);
   });
 
-  it("a failed download offers Retry, keeps Next locked and works on the second try", async () => {
+  it("a failed download shows the troubleshooting panel with Retry, keeps Next locked and works on the second try", async () => {
     let attempts = 0;
     await boot({
       runtime: status({}),
@@ -218,13 +268,14 @@ describe("setup wizard", () => {
       },
     });
     await click("wizard-runtime-btn");
-    expect($("wizard-runtime-status").textContent).toContain("The connection was closed");
-    expect($("wizard-runtime-btn").textContent).toBe("Retry");
-    expect($<HTMLButtonElement>("wizard-runtime-btn").disabled).toBe(false);
+    expect($("wizard-troubleshoot").hidden).toBe(false);
+    expect($("wizard-troubleshoot-cause").textContent).toContain("The connection was closed");
+    expect($("wizard-runtime-status").textContent).toBe("Speech engine setup failed.");
     expect($<HTMLButtonElement>("wizard-next-btn").disabled).toBe(true);
 
-    await click("wizard-runtime-btn");
+    await click("wizard-troubleshoot-retry");
     expect(attempts).toBe(2);
+    expect($("wizard-troubleshoot").hidden).toBe(true);
     expect($<HTMLButtonElement>("wizard-next-btn").disabled).toBe(false);
   });
 
@@ -299,5 +350,246 @@ describe("setup wizard", () => {
       },
     });
     expect(visibleStep()).toEqual(["model"]);
+  });
+});
+
+describe("setup wizard troubleshooting", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  const OFFLINE = {
+    code: "offline",
+    message: "Could not reach the download server (github.com).",
+    hint: "Check your internet connection, VPN and firewall.",
+    detail: "Dns Failed",
+  };
+  const failDownload = () => {
+    throw OFFLINE;
+  };
+  const cards = () => Array.from(document.querySelectorAll<HTMLElement>(".wizard-package"));
+  const buttonOf = (card: HTMLElement, label: string) =>
+    Array.from(card.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.startsWith(label))!;
+
+  async function failFirst(handlers: Scenario["handlers"] = {}, detect: unknown = NVIDIA) {
+    const result = await boot({
+      runtime: status({}),
+      handlers: { download_whisper_runtime: failDownload, detect_recommended_runtime: () => detect, ...handlers },
+    });
+    await click("wizard-runtime-btn");
+    await vi.waitFor(() => expect(cards().length).toBe(2));
+    return result;
+  }
+
+  it("shows what went wrong and what to do from the structured error", async () => {
+    await failFirst();
+    expect($("wizard-troubleshoot").hidden).toBe(false);
+    expect($("wizard-troubleshoot-cause").textContent).toBe(OFFLINE.message);
+    expect($("wizard-troubleshoot-hint").textContent).toBe(OFFLINE.hint);
+    expect($("wizard-troubleshoot-retry").textContent).toBe("Retry");
+    expect($("wizard-runtime-btn").hidden).toBe(true);
+    expect($<HTMLButtonElement>("wizard-next-btn").disabled).toBe(true);
+    // The user can still pick the other engine before retrying.
+    expect(document.querySelector<HTMLInputElement>('input[name="wizard-engine"]')!.disabled).toBe(false);
+  });
+
+  it("explains which package to take and lists both with name, size and SHA-256, the recommended one first", async () => {
+    await failFirst();
+    expect($("wizard-troubleshoot-which").textContent).toContain("NVIDIA RTX/GTX 16xx or newer");
+    expect($("wizard-troubleshoot-which").textContent).toContain("Vulkan package");
+    expect(cards().map((c) => c.dataset.variant)).toEqual(["cuda", "vulkan"]);
+    const [cuda, vulkan] = cards();
+    expect(cuda.textContent).toContain("NVIDIA CUDA package");
+    expect(cuda.textContent).toContain("whisper-runtime-cuda-win64.zip");
+    expect(cuda.textContent).toContain("486 MB");
+    expect(cuda.querySelector("code")!.textContent).toBe(MANUAL_INFO.variants[0].sha256);
+    expect(cuda.textContent).toContain("Recommended for this PC");
+    expect(vulkan.textContent).not.toContain("Recommended for this PC");
+    expect(vulkan.querySelector("code")!.textContent).toBe(MANUAL_INFO.variants[1].sha256);
+    expect($("wizard-troubleshoot-packages").textContent).toContain("releases/tag/whisper-runtime-v1.9.5");
+  });
+
+  it("lists Vulkan first on a PC without an NVIDIA card", async () => {
+    await failFirst(
+      {},
+      { recommended: "vulkan", gpu_name: "AMD Radeon RX 7800 XT", nvidia: false, reason: "No NVIDIA GPU detected." }
+    );
+    expect(cards().map((c) => c.dataset.variant)).toEqual(["vulkan", "cuda"]);
+    expect(cards()[0].textContent).toContain("Recommended for this PC");
+  });
+
+  it("copies the SHA-256 of a package", async () => {
+    await failFirst();
+    buttonOf(cards()[1], "Copy").click();
+    await flush();
+    expect(mocks.writeText).toHaveBeenCalledWith(MANUAL_INFO.variants[1].sha256);
+    expect($("wizard-troubleshoot-note").textContent).toBe("SHA-256 copied.");
+  });
+
+  it("opens the download page of the chosen package in the browser", async () => {
+    await failFirst();
+    buttonOf(cards()[1], "Open download page").click();
+    await flush();
+    expect(mocks.invoke).toHaveBeenCalledWith("open_runtime_download_page", { variant: "vulkan" });
+    expect($("wizard-troubleshoot-note").textContent).toContain("Use downloaded file");
+  });
+
+  it("imports the picked .zip and runs the same self-test as after a download", async () => {
+    const imported = vi.fn(() => status({ cuda: true }));
+    await failFirst({ import_whisper_runtime_zip: imported });
+    mocks.openDialog.mockResolvedValue("C:/Users/Max/Downloads/whisper-runtime-cuda-win64.zip");
+    buttonOf(cards()[0], "Use downloaded file").click();
+    await vi.waitFor(() => expect($("wizard-runtime-status").textContent).toBe("Speech engine ready (CUDA)."));
+
+    expect(mocks.openDialog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: false,
+        multiple: false,
+        filters: [expect.objectContaining({ extensions: ["zip"] })],
+      })
+    );
+    expect(imported).toHaveBeenCalledWith({
+      variant: "cuda",
+      path: "C:/Users/Max/Downloads/whisper-runtime-cuda-win64.zip",
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("verify_whisper_runtime", { variant: "cuda" });
+    expect($("wizard-troubleshoot").hidden).toBe(true);
+    expect($<HTMLButtonElement>("wizard-next-btn").disabled).toBe(false);
+  });
+
+  it("cancelling the file dialog changes nothing", async () => {
+    const imported = vi.fn();
+    await failFirst({ import_whisper_runtime_zip: imported });
+    mocks.openDialog.mockResolvedValue(null);
+    buttonOf(cards()[0], "Use downloaded file").click();
+    await flush();
+    expect(imported).not.toHaveBeenCalled();
+    expect($("wizard-troubleshoot").hidden).toBe(false);
+  });
+
+  it("a wrong file is explained and the user can try again", async () => {
+    const wrong = {
+      code: "wrong_package",
+      message: "This is the Vulkan package, but you selected NVIDIA CUDA.",
+      hint: "Use this file with the Vulkan package, or download the NVIDIA CUDA package.",
+      detail: "",
+    };
+    let calls = 0;
+    await failFirst({
+      import_whisper_runtime_zip: () => {
+        calls += 1;
+        if (calls === 1) throw wrong;
+        return status({ vulkan: true });
+      },
+    });
+    mocks.openDialog.mockResolvedValue("C:/dl/whisper-runtime-vulkan-win64.zip");
+    buttonOf(cards()[0], "Use downloaded file").click();
+    await vi.waitFor(() => expect($("wizard-troubleshoot-cause").textContent).toBe(wrong.message));
+    expect($("wizard-troubleshoot").hidden).toBe(false);
+    expect($<HTMLButtonElement>("wizard-next-btn").disabled).toBe(true);
+
+    // Same file with the package it belongs to.
+    buttonOf(cards()[1], "Use downloaded file").click();
+    await vi.waitFor(() => expect($("wizard-runtime-status").textContent).toBe("Speech engine ready (Vulkan)."));
+    expect($("wizard-troubleshoot").hidden).toBe(true);
+  });
+
+  it("an imported CUDA engine that fails its self-test falls back to Vulkan; if that fails too, the Vulkan package comes first", async () => {
+    const downloads: string[] = [];
+    const { state } = await failFirst({
+      download_whisper_runtime: (args) => {
+        downloads.push(String(args?.variant));
+        throw OFFLINE;
+      },
+      import_whisper_runtime_zip: () => status({ cuda: true }),
+      verify_whisper_runtime: (args) =>
+        args?.variant === "cuda"
+          ? { variant: "cuda", ok: false, detail: "The NVIDIA driver is too old.", fallback_variant: "vulkan" }
+          : { variant: "vulkan", ok: true, detail: "ok", fallback_variant: null },
+    });
+    mocks.openDialog.mockResolvedValue("C:/dl/whisper-runtime-cuda-win64.zip");
+    buttonOf(cards()[0], "Use downloaded file").click();
+    await vi.waitFor(() => expect($("wizard-troubleshoot-context").hidden).toBe(false));
+
+    expect(downloads).toEqual(["cuda", "vulkan"]);
+    expect($("wizard-troubleshoot-context").textContent).toContain(
+      "CUDA does not work on this PC: The NVIDIA driver is too old."
+    );
+    await vi.waitFor(() => expect(cards().map((c) => c.dataset.variant)).toEqual(["vulkan", "cuda"]));
+    expect(cards()[0].textContent).toContain("Recommended for this PC");
+    expect(state.settings!.local_backend_preference).toBe("vulkan");
+  });
+
+  it("copies diagnostics with version, OS, GPU, engine and error, without the user name", async () => {
+    await failFirst();
+    $("wizard-troubleshoot-copy-diagnostics").click();
+    await vi.waitFor(() => expect(mocks.writeText).toHaveBeenCalled());
+    const text = String(mocks.writeText.mock.calls[0][0]);
+    for (const expected of [
+      "App version: 0.10.0",
+      "OS: Windows 10.0.26300 (x86_64)",
+      "Engine folder: %LOCALAPPDATA%",
+      "GPU detection: recommends cuda; NVIDIA GeForce RTX 5070 Ti",
+      "Engine in question: cuda",
+      "Error code: offline",
+      "Error: Could not reach the download server (github.com).",
+    ]) {
+      expect(text).toContain(expected);
+    }
+    expect(text).not.toContain("Max");
+    await vi.waitFor(() => expect($("wizard-troubleshoot-note").textContent).toContain("Diagnostics copied"));
+  });
+
+  it("shows the diagnostics for copying by hand when the clipboard is not available", async () => {
+    await failFirst();
+    mocks.writeText.mockRejectedValue(new Error("denied"));
+    $("wizard-troubleshoot-copy-diagnostics").click();
+    await vi.waitFor(() => expect($("wizard-troubleshoot-diagnostics").hidden).toBe(false));
+    expect($<HTMLTextAreaElement>("wizard-troubleshoot-diagnostics").value).toContain("Error code: offline");
+  });
+
+  it("says so when the package info cannot be read, and keeps Retry", async () => {
+    await boot({
+      runtime: status({}),
+      handlers: {
+        download_whisper_runtime: failDownload,
+        get_whisper_runtime_manual_info: () => {
+          throw new Error("unknown command");
+        },
+      },
+    });
+    await click("wizard-runtime-btn");
+    await vi.waitFor(() => expect($("wizard-troubleshoot-packages").textContent).toContain("could not be read"));
+    expect(cards().length).toBe(0);
+    expect($("wizard-troubleshoot-retry")).toBeTruthy();
+  });
+
+  it("Open setup: a missing engine long after the first start reopens the wizard with the engine step only", async () => {
+    let present = true;
+    const { wizardModule } = await boot({
+      runtime: status({}),
+      modelInstalled: true,
+      completed: true,
+      handlers: {
+        get_whisper_runtime_status: () => (present ? status({ vulkan: true, bundled: true }) : status({})),
+      },
+    });
+    expect($("onboarding-wizard").hidden).toBe(true);
+
+    present = false;
+    await wizardModule.reopenSpeechEngineSetup();
+    await flush();
+    expect($("onboarding-wizard").hidden).toBe(false);
+    expect(visibleStep()).toEqual(["runtime"]);
+    expect($("wizard-step-total").textContent).toBe("1");
+    expect($<HTMLButtonElement>("wizard-finish-btn").disabled).toBe(true);
+    expect($("wizard-step-runtime").textContent!.match(/\(recommended\)/g)).toHaveLength(1);
+
+    // The button works although the wizard was not shown at startup.
+    await click("wizard-runtime-btn");
+    expect(mocks.invoke).toHaveBeenCalledWith("download_whisper_runtime", { variant: "cuda" });
+    await wizardModule.reopenSpeechEngineSetup();
+    await flush();
+    expect($("wizard-step-runtime").textContent!.match(/\(recommended\)/g)).toHaveLength(1);
   });
 });

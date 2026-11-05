@@ -1419,6 +1419,34 @@
             </div>
             <span id="wizard-runtime-status" class="field-hint wizard-status" role="status"></span>
           </div>
+
+          <!-- Shown when the engine setup failed: cause, hint, retry, and the manual way -->
+          <div id="wizard-troubleshoot" class="wizard-troubleshoot" hidden>
+            <h5>Troubleshooting</h5>
+            <p id="wizard-troubleshoot-context" class="field-hint" hidden></p>
+            <div class="wizard-troubleshoot-block">
+              <strong>What went wrong</strong>
+              <p id="wizard-troubleshoot-cause" class="wizard-text"></p>
+            </div>
+            <div class="wizard-troubleshoot-block">
+              <strong>What you can do</strong>
+              <p id="wizard-troubleshoot-hint" class="wizard-text"></p>
+            </div>
+            <div class="wizard-troubleshoot-actions">
+              <button id="wizard-troubleshoot-retry" type="button" class="btn btn-primary">Retry</button>
+              <button id="wizard-troubleshoot-copy-diagnostics" type="button" class="hotkey-record-btn">Copy diagnostics</button>
+            </div>
+
+            <h5>Download it yourself</h5>
+            <p class="field-hint"><strong>Which one do I need?</strong> <span id="wizard-troubleshoot-which"></span></p>
+            <ol class="wizard-troubleshoot-steps field-hint">
+              <li>Click "Open download page" of the package you need. Your browser downloads the .zip file.</li>
+              <li>When it has finished, click "Use downloaded file…" and pick that .zip file. Trispr Flow checks it against the fixed fingerprint before it uses it.</li>
+            </ol>
+            <div id="wizard-troubleshoot-packages" class="wizard-troubleshoot-packages"></div>
+            <span id="wizard-troubleshoot-note" class="field-hint wizard-status" role="status"></span>
+            <textarea id="wizard-troubleshoot-diagnostics" class="wizard-troubleshoot-diagnostics" readonly rows="8" aria-label="Diagnostics" hidden></textarea>
+          </div>
         </div>
 
         <!-- Step: speech model -->

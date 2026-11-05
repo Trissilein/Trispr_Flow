@@ -112,3 +112,137 @@ export function describeRecommendation(rec: RuntimeRecommendation | null): strin
   if (!rec) return "Could not detect the graphics card. Vulkan runs on any modern GPU.";
   return rec.reason;
 }
+
+// ---------------------------------------------------------------------------------------
+// Troubleshooting: what the wizard shows when the engine setup fails
+// ---------------------------------------------------------------------------------------
+
+/** Structured failure of the download or the manual import (`code` is stable, see Rust `RuntimeError`). */
+export interface RuntimeSetupError {
+  code: string;
+  /** What went wrong. */
+  message: string;
+  /** What the user can do. */
+  hint: string;
+  /** Technical text, for the diagnostics. */
+  detail: string;
+}
+
+export interface ManualPackage {
+  variant: RuntimeVariant;
+  label: string;
+  asset: string;
+  url: string;
+  size_mb: number;
+  size_bytes: number;
+  sha256: string;
+  which_gpu_hint: string;
+}
+
+export interface ManualInfo {
+  release_page_url: string;
+  whisper_cpp_version: string;
+  variants: ManualPackage[];
+}
+
+export interface SetupDiagnostics {
+  app_version: string;
+  os: string;
+  arch: string;
+  runtime_dir: string;
+  whisper_cpp_version: string;
+  adapters: Array<{ vendor_id: string; name: string }>;
+  variants: Array<{ variant: string; bundled: boolean; downloaded: boolean }>;
+}
+
+export const GENERIC_HINT =
+  'Retry. If it keeps failing, use "Download it yourself" below and copy the diagnostics when you ask for help.';
+
+export const WHICH_ONE_DO_I_NEED =
+  "NVIDIA RTX/GTX 16xx or newer with a current driver: the CUDA package. Everything else, including Intel and AMD graphics: the Vulkan package.";
+
+/**
+ * Tauri hands a failed command's `Err` over as the serialized value: our structured error for
+ * the speech engine commands, a plain string for older ones. Anything else (an `Error`, an
+ * unexpected object) is wrapped so the panel always has a cause and a hint.
+ */
+export function toRuntimeError(err: unknown): RuntimeSetupError {
+  if (err && typeof err === "object" && !(err instanceof Error)) {
+    const record = err as Record<string, unknown>;
+    if (typeof record.message === "string" && record.message) {
+      return {
+        code: typeof record.code === "string" && record.code ? record.code : "unknown",
+        message: record.message,
+        hint: typeof record.hint === "string" && record.hint ? record.hint : GENERIC_HINT,
+        detail: typeof record.detail === "string" ? record.detail : "",
+      };
+    }
+  }
+  const text = err instanceof Error ? err.message : typeof err === "string" ? err : safeJson(err);
+  return { code: "unknown", message: text || "Unknown error.", hint: GENERIC_HINT, detail: text };
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/** The preferred package first; without a preference Vulkan, the one that runs everywhere. */
+export function orderPackages(packages: ManualPackage[], preferred: RuntimeVariant | null): ManualPackage[] {
+  const first = preferred ?? "vulkan";
+  return [...packages].sort((a, b) => Number(b.variant === first) - Number(a.variant === first));
+}
+
+/** `C:\Users\<name>\...` -> `%USERPROFILE%\...`: a support text should not carry the user name. */
+export function maskUserPaths(text: string): string {
+  return text.replace(/[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s'"]+/gi, "%USERPROFILE%");
+}
+
+/** Plain text for a support request. No settings, no history, no tokens, no user name. */
+export function buildDiagnosticsText(input: {
+  diagnostics: SetupDiagnostics | null;
+  variant: RuntimeVariant | null;
+  error: RuntimeSetupError | null;
+  recommendation: RuntimeRecommendation | null;
+}): string {
+  const { diagnostics, variant, error, recommendation } = input;
+  const lines = ["Trispr Flow speech engine diagnostics"];
+  if (diagnostics) {
+    const installed = diagnostics.variants
+      .map((v) => `${v.variant}=${v.bundled ? "bundled" : v.downloaded ? "downloaded" : "missing"}`)
+      .join(", ");
+    lines.push(
+      `App version: ${diagnostics.app_version}`,
+      `OS: ${diagnostics.os} (${diagnostics.arch})`,
+      `Engine folder: ${diagnostics.runtime_dir}`,
+      `whisper.cpp: ${diagnostics.whisper_cpp_version}`,
+      `Installed: ${installed || "unknown"}`
+    );
+  } else {
+    lines.push("App version / OS: could not be read");
+  }
+  lines.push(
+    recommendation
+      ? `GPU detection: recommends ${recommendation.recommended}; ${recommendation.gpu_name ?? "no GPU name"}; ${recommendation.reason}`
+      : "GPU detection: failed"
+  );
+  if (diagnostics?.adapters.length) {
+    lines.push(`Adapters: ${diagnostics.adapters.map((a) => `${a.name} (${a.vendor_id})`).join("; ")}`);
+  }
+  lines.push(`Engine in question: ${variant ?? "none"}`);
+  if (error) {
+    lines.push(`Error code: ${error.code}`, `Error: ${error.message}`);
+    if (error.detail && error.detail !== error.message) lines.push(`Technical detail: ${error.detail}`);
+  } else {
+    lines.push("Error: none");
+  }
+  return maskUserPaths(lines.join("\n"));
+}
+
+/** Backend texts that mean "no usable speech engine on disk" (`transcription.rs`, startup preflight). */
+export function isRuntimeMissingMessage(text: string): boolean {
+  return /whisper (?:cuda |vulkan )?runtime (?:executable )?is (?:missing|incomplete)|whisper-cli not found/i.test(text);
+}

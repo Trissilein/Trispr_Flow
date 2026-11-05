@@ -1,0 +1,115 @@
+{
+  "name": "whisper-runtime-1.9.5",
+  "whisper_cpp_version": "v1.9.5",
+  "release_tag": "whisper-runtime-v1.9.5",
+  "build": {
+    "compiler": "MSVC 19.51",
+    "ggml_native": false,
+    "cpu_baseline": "AVX2/FMA/F16C/BMI2",
+    "cuda": "13.3 (sm_75;89;120a)",
+    "vulkan_sdk": "1.4.363.0"
+  },
+  "variants": {
+    "cuda": {
+      "asset": "whisper-runtime-cuda-win64.zip",
+      "url": "https://github.com/Trissilein/Trispr_Flow/releases/download/whisper-runtime-v1.9.5/whisper-runtime-cuda-win64.zip",
+      "zip_size": 509246371,
+      "zip_sha256": "7eb328951a8362db0213feecede812928165eb2cafa331a85fe5c41af465f67c",
+      "files": [
+        {
+          "name": "cublas64_13.dll",
+          "length": 51870320,
+          "sha256": "f1d500d0cd892f5b8c6b6cdbffd82d0c55d5f5427215668e7ceb55aeeccc1b63"
+        },
+        {
+          "name": "cublasLt64_13.dll",
+          "length": 460301424,
+          "sha256": "b592cd016d7673e9cb97716a22b27c4010ee635377a3ba28f37070a9bdb76a68"
+        },
+        {
+          "name": "cudart64_13.dll",
+          "length": 551024,
+          "sha256": "b00ca6f53699120da815bf3e06e2e4285fae2f201235b883dcbb50eec51e2a2a"
+        },
+        {
+          "name": "ggml-base.dll",
+          "length": 694272,
+          "sha256": "9fe04ee1c03dac8fadc2b476d384a199bf545623f7b1eade0845560271e915f0"
+        },
+        {
+          "name": "ggml-cpu.dll",
+          "length": 1008640,
+          "sha256": "5f26447851271aa09a610505fef2516c2e771847b7e6b5ddd3bb172143990cf5"
+        },
+        {
+          "name": "ggml-cuda.dll",
+          "length": 130049024,
+          "sha256": "1adf33e698ed6979b1a266b8147853de7a234ccf2d95959eb1be14a8600a08ee"
+        },
+        {
+          "name": "ggml.dll",
+          "length": 62976,
+          "sha256": "84699905f658bd0c23b165eceb4ab8db624e197406c90a863c5de0bac764c3f3"
+        },
+        {
+          "name": "whisper-cli.exe",
+          "length": 479744,
+          "sha256": "756115348f242d1696fa6e2f879739fb17d58cab87eb2f973f9c8853f2635572"
+        },
+        {
+          "name": "whisper-server.exe",
+          "length": 726016,
+          "sha256": "d107fc53e988283f788cf3b863457a7413f401c8337b91a7f65324ac7d551d78"
+        },
+        {
+          "name": "whisper.dll",
+          "length": 1370112,
+          "sha256": "c8ef3c73edf7837abebb25189f9e6ed5b78e65fa8d69141f8d3bab9000780fb7"
+        }
+      ]
+    },
+    "vulkan": {
+      "asset": "whisper-runtime-vulkan-win64.zip",
+      "url": "https://github.com/Trissilein/Trispr_Flow/releases/download/whisper-runtime-v1.9.5/whisper-runtime-vulkan-win64.zip",
+      "zip_size": 15711052,
+      "zip_sha256": "1c19fe8700837a7d32b4e954e043b6916b21d27824d48c39409e26e00dca61e2",
+      "files": [
+        {
+          "name": "ggml-base.dll",
+          "length": 694272,
+          "sha256": "6c530029fc78da651fa1ee97c0201aa07e2c18d7e357cec48b112f9c4b1b1452"
+        },
+        {
+          "name": "ggml-cpu.dll",
+          "length": 1008640,
+          "sha256": "44dcb76fa1b12fe0d3c5d61c29ec0fa8b039031ff89250a2a01cc17076c2708d"
+        },
+        {
+          "name": "ggml-vulkan.dll",
+          "length": 45303808,
+          "sha256": "605f3cdbc2a78c740e0a120b238a5b816665cf8e620beab15ce3e8c567f97e2f"
+        },
+        {
+          "name": "ggml.dll",
+          "length": 62976,
+          "sha256": "498a5cf3ac7d8babd96486f0601fea8528f0b27962a538e457a667956d827957"
+        },
+        {
+          "name": "whisper-cli.exe",
+          "length": 479744,
+          "sha256": "756ffb21b7196824c0f832a3bbeb86b23482c50e51a5c2b91018320833176116"
+        },
+        {
+          "name": "whisper-server.exe",
+          "length": 726016,
+          "sha256": "7db24624cee5457bed2270bac6a358a9ee57c6eedb129de4a5525f2794092fbc"
+        },
+        {
+          "name": "whisper.dll",
+          "length": 1370112,
+          "sha256": "d1ac28f895ca64e4b590e7a8bb4330d41c4c9155692fc80384184debe0991a1a"
+        }
+      ]
+    }
+  }
+}

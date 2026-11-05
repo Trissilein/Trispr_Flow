@@ -85,10 +85,7 @@ import {
   wireEvents,
   cleanupWindowListeners,
 } from "./event-listeners";
-import {
-  initMainTab,
-  reconcileMainTabVisibility,
-} from "./wiring/app-chrome.wire";
+import { initMainTab } from "./wiring/app-chrome.wire";
 import { scheduleSettingsRender } from "./wiring/wire-helpers";
 import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
@@ -96,12 +93,6 @@ import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { initExportDialog } from "./export-dialog";
 import { initExpertMode } from "./expert-mode";
-import {
-  applySettingsVisibility,
-  initSettingsVisibility,
-  refreshSettingsVisibilityEditor,
-} from "./settings-visibility";
-import { initModulesHub, refreshModulesHub } from "./modules-hub";
 import { initOnboardingWizard } from "./onboarding-wizard";
 import { initPipelineStatus } from "./pipeline-status";
 import { ingestEditDelta } from "./vocab-auto-learn";
@@ -530,20 +521,7 @@ async function bootstrap() {
   initUnifiedTooltips();
   initHistoryDelegation();
   initExportDialog();
-  const reconcileSettingsVisibility = () => reconcileMainTabVisibility();
-  const applySettingsVisibilityMode = () => applySettingsVisibility();
-  const refreshDynamicSettingsVisibility = () => refreshSettingsVisibilityEditor();
-  window.addEventListener("settings-visibility:applied", reconcileSettingsVisibility);
-  window.addEventListener("settings-visibility:mode-changed", applySettingsVisibilityMode);
-  window.addEventListener("settings-visibility:dynamic-rendered", refreshDynamicSettingsVisibility);
-  window.addEventListener("settings-visibility:tab-switched", refreshDynamicSettingsVisibility);
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:applied", reconcileSettingsVisibility));
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:mode-changed", applySettingsVisibilityMode));
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:dynamic-rendered", refreshDynamicSettingsVisibility));
-  eventUnlisteners.push(() => window.removeEventListener("settings-visibility:tab-switched", refreshDynamicSettingsVisibility));
   initExpertMode();
-  initSettingsVisibility();
-  initModulesHub();
   void initOnboardingWizard();
   initPipelineStatus();
 
@@ -560,7 +538,6 @@ async function bootstrap() {
     setRefiningActive(false);
     renderRefinementInspector();
     renderModels();
-    refreshModulesHub();
   } catch (renderError) {
     console.error("Non-fatal render error during bootstrap:", renderError);
     traceFrontendError("bootstrap.render", "non-fatal render error", {
@@ -686,14 +663,12 @@ async function bootstrap() {
   const _newListeners = await Promise.all([
     listen<Settings>("settings-changed", (event) => {
       setSettings(event.payload ?? null);
-      reconcileMainTabVisibility();
       if (!isRefinementEnabled()) {
         resetTrackedRefinementJobs();
       }
       scheduleSettingsRender();
       renderHero();
       renderModels();
-      refreshModulesHub();
       void refreshModelsDir().catch((e) => console.error("refreshModelsDir failed:", e));
       if (isRefinementEnabled()) {
         if (OLLAMA_SETTINGS_CHANGED_POLICY.refreshInstalledModels) {
@@ -723,10 +698,6 @@ async function bootstrap() {
         ingestEditDelta(event.payload.pasted, event.payload.submitted);
       },
     ),
-    listen("module:state-changed", () => {
-      reconcileMainTabVisibility();
-      refreshModulesHub();
-    }),
     listen<{ message: string }>("whisper:server-fatal", (event) => {
       const message = event.payload?.message?.trim();
       if (!message) return;

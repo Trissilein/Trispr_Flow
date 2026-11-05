@@ -1494,11 +1494,7 @@ fn handle_transcription_ok(
 }
 
 fn ai_refinement_capability_enabled(settings: &Settings) -> bool {
-    settings
-        .module_settings
-        .enabled_modules
-        .contains(crate::state::AI_REFINEMENT_MODULE_ID)
-        && settings.ai_fallback.enabled
+    settings.ai_fallback.enabled
 }
 
 fn should_defer_paste_for_refinement_inner(settings: &Settings, _ollama_ready: bool) -> bool {
@@ -3429,7 +3425,7 @@ mod refinement_defer_policy_tests {
         is_ollama_model_not_found_message, is_refinement_success_stale,
         should_defer_paste_for_refinement_inner, REFINEMENT_COLD_PASTE_MAX_AGE_MS,
     };
-    use crate::state::{Settings, AI_REFINEMENT_MODULE_ID};
+    use crate::state::Settings;
 
     const NOW_MS: u64 = 10_000_000;
 
@@ -3470,14 +3466,8 @@ mod refinement_defer_policy_tests {
         ));
     }
 
-    fn settings_for_policy(module_enabled: bool, setting_enabled: bool) -> Settings {
+    fn settings_for_policy(setting_enabled: bool) -> Settings {
         let mut settings = Settings::default();
-        if module_enabled {
-            settings
-                .module_settings
-                .enabled_modules
-                .insert(AI_REFINEMENT_MODULE_ID.to_string());
-        }
         settings.ai_fallback.enabled = setting_enabled;
         settings.ai_fallback.provider = "ollama".to_string();
         settings
@@ -3485,25 +3475,19 @@ mod refinement_defer_policy_tests {
 
     #[test]
     fn ollama_not_ready_still_defers_for_on_demand_start() {
-        let settings = settings_for_policy(true, true);
+        let settings = settings_for_policy(true);
         assert!(should_defer_paste_for_refinement_inner(&settings, false));
     }
 
     #[test]
     fn ollama_ready_enables_deferred_paste() {
-        let settings = settings_for_policy(true, true);
+        let settings = settings_for_policy(true);
         assert!(should_defer_paste_for_refinement_inner(&settings, true));
     }
 
     #[test]
-    fn module_or_setting_disabled_forces_no_defer() {
-        let module_disabled = settings_for_policy(false, true);
-        assert!(!should_defer_paste_for_refinement_inner(
-            &module_disabled,
-            true
-        ));
-
-        let setting_disabled = settings_for_policy(true, false);
+    fn setting_disabled_forces_no_defer() {
+        let setting_disabled = settings_for_policy(false);
         assert!(!should_defer_paste_for_refinement_inner(
             &setting_disabled,
             true

@@ -100,7 +100,6 @@ Installer build/upload shortcuts:
 
 Canonical planning docs:
 - [ROADMAP.md](ROADMAP.md)
-- [docs/TASK_SCHEDULE.md](docs/TASK_SCHEDULE.md)
 
 ## Dependencies
 

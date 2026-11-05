@@ -68,11 +68,9 @@ function mountDom(): void {
     <button id="tab-btn-transcription"></button>
     <button id="tab-btn-settings"></button>
     <button id="tab-btn-ai-refinement"></button>
-    <button id="tab-btn-modules"></button>
     <div id="tab-transcription"></div>
     <div id="tab-settings"></div>
     <div id="tab-ai-refinement"></div>
-    <div id="tab-modules"></div>
 
     <div class="panel" data-panel="panel-a">
       <button class="panel-collapse-btn" data-panel-collapse="panel-a"></button>
@@ -84,23 +82,14 @@ function mountDom(): void {
     </div>
     <button class="panel-collapse-btn" data-panel-collapse="invalid-panel"></button>
 
-    <button id="open-modules-btn"></button>
-
     <input id="accent-color" type="color" value="#00ff00" />
     <button id="accent-color-reset"></button>
   `;
 }
 
 function makeSettings(options: { ai?: boolean } = {}): Settings {
-  const enabledModules: string[] = [];
-  if (options.ai) enabledModules.push("ai_refinement");
   return {
     accent_color: "#00ff00",
-    module_settings: {
-      enabled_modules: enabledModules,
-      consented_permissions: {},
-      module_overrides: {},
-    },
     ai_fallback: {
       enabled: options.ai ?? false,
       provider: "ollama",
@@ -163,83 +152,11 @@ describe("wireAppChrome - main tabs", () => {
     expect(activeTabId()).toBe("tab-btn-settings");
   });
 
-  it("openMainTab activates modules", async () => {
-    const { appChrome } = await setup();
-    appChrome.openMainTab("modules");
-    expect(activeTabId()).toBe("tab-btn-modules");
-  });
-
   it("tab buttons switch tabs", async () => {
     const { appChrome } = await setup();
     appChrome.wireAppChrome();
     click("tab-btn-settings");
     expect(activeTabId()).toBe("tab-btn-settings");
-  });
-
-  it("announces the resolved tab after switching for the inline visibility editor", async () => {
-    const { appChrome } = await setup({ ai: true });
-    const switched = vi.fn();
-    window.addEventListener("settings-visibility:tab-switched", switched, { once: true });
-
-    appChrome.openMainTab("ai-refinement");
-
-    expect(switched).toHaveBeenCalledWith(expect.objectContaining({
-      detail: { tab: "ai-refinement" },
-    }));
-  });
-
-  it("hides unavailable AI tab", async () => {
-    const { appChrome } = await setup({ ai: false });
-    appChrome.initMainTab();
-    const button = document.getElementById("tab-btn-ai-refinement") as HTMLButtonElement;
-    expect(button.hidden).toBe(true);
-    expect(button.getAttribute("aria-hidden")).toBe("true");
-    expect(button.getAttribute("tabindex")).toBe("-1");
-  });
-
-  it("shows available AI tab", async () => {
-    const { appChrome } = await setup({ ai: true });
-    appChrome.initMainTab();
-    const button = document.getElementById("tab-btn-ai-refinement") as HTMLButtonElement;
-    expect(button.hidden).toBe(false);
-    expect(button.getAttribute("aria-hidden")).toBe("false");
-    expect(button.hasAttribute("tabindex")).toBe(false);
-  });
-
-  it("falls back when an available tab has no Basic settings", async () => {
-    document.documentElement.classList.add("standard-mode");
-    document.getElementById("tab-btn-ai-refinement")?.setAttribute(
-      "data-settings-visibility-tab",
-      "ai-refinement",
-    );
-    document.getElementById("tab-btn-ai-refinement")?.setAttribute(
-      "data-settings-visibility-no-basic",
-      "true",
-    );
-    const { appChrome } = await setup({ ai: true });
-    document.documentElement.classList.add("standard-mode");
-    document.getElementById("tab-btn-ai-refinement")?.setAttribute(
-      "data-settings-visibility-tab",
-      "ai-refinement",
-    );
-    document.getElementById("tab-btn-ai-refinement")?.setAttribute(
-      "data-settings-visibility-no-basic",
-      "true",
-    );
-    appChrome.openMainTab("ai-refinement");
-    expect(activeTabId()).toBe("tab-btn-transcription");
-  });
-
-  it("does not restore a saved tab that has no Basic settings", async () => {
-    const { appChrome } = await setup({ ai: true });
-    document.documentElement.classList.add("standard-mode");
-    const aiTab = document.getElementById("tab-btn-ai-refinement");
-    aiTab?.setAttribute("data-settings-visibility-tab", "ai-refinement");
-    aiTab?.setAttribute("data-settings-visibility-no-basic", "true");
-    localStorage.setItem("trispr-active-tab", "ai-refinement");
-
-    appChrome.initMainTab();
-    expect(activeTabId()).toBe("tab-btn-transcription");
   });
 
   it("refreshes Ollama state when opening AI tab", async () => {
@@ -290,13 +207,6 @@ describe("wireAppChrome - panels and shortcuts", () => {
     click("panel-action-btn");
     click("panel-header-input");
     expect(mocks.togglePanel).not.toHaveBeenCalled();
-  });
-
-  it("open modules button opens modules", async () => {
-    const { appChrome } = await setup();
-    appChrome.wireAppChrome();
-    click("open-modules-btn");
-    expect(activeTabId()).toBe("tab-btn-modules");
   });
 
   it("initializes hotkey status listener", async () => {

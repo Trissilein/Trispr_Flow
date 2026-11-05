@@ -1,6 +1,4 @@
 use crate::ai_fallback::provider::ping_ollama_quick;
-use crate::modules::health as module_health;
-use crate::modules::registry as module_registry;
 use crate::state::{AppState, RuntimeDiagnostics, Settings, StartupStatus};
 use crate::{
     capability_enabled, refresh_runtime_diagnostics, refresh_startup_status, RuntimeCapability,
@@ -61,41 +59,6 @@ pub(crate) async fn get_runtime_diagnostics(app: AppHandle) -> RuntimeDiagnostic
     })
     .await
     .unwrap_or_default()
-}
-
-fn build_module_dependency_preflight_items(settings: &Settings) -> Vec<DependencyPreflightItem> {
-    let installed_package_ids = std::collections::HashSet::new();
-    let descriptors = module_registry::modules_as_descriptors(&settings.module_settings);
-    let health = module_health::get_health_with_packages(
-        &settings.module_settings,
-        None,
-        &installed_package_ids,
-    );
-
-    health
-        .into_iter()
-        .filter(|entry| entry.state != "ok")
-        .filter_map(|entry| {
-            let descriptor = descriptors
-                .iter()
-                .find(|descriptor| descriptor.id == entry.module_id)?;
-            let (status, required) = match entry.state.as_str() {
-                "release_blocker" | "error" => ("error", true),
-                "needs_setup" | "fallback_active" | "local_warning" | "degraded" => {
-                    ("warning", false)
-                }
-                _ => return None,
-            };
-
-            Some(DependencyPreflightItem {
-                id: format!("module_{}", entry.module_id),
-                status: status.to_string(),
-                required,
-                message: format!("Module '{}' health: {}", descriptor.name, entry.detail),
-                hint: Some("Open Modules tab and run Health / dependency checks.".to_string()),
-            })
-        })
-        .collect()
 }
 
 pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyPreflightReport {
@@ -190,8 +153,6 @@ pub(crate) fn build_dependency_preflight_report(state: &AppState) -> DependencyP
             },
         });
     }
-
-    items.extend(build_module_dependency_preflight_items(&settings_snapshot));
 
     let blocking_count = items.iter().filter(|item| item.status == "error").count();
     let warning_count = items.iter().filter(|item| item.status == "warning").count();

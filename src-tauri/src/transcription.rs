@@ -209,8 +209,7 @@ struct TranscriptionGpuActivityEvent {
 #[cfg(test)]
 mod tests {
     use super::{
-        gpu_backend_attempt_order, should_drop_transcript,
-        whisper_runtime_preflight_issue,
+        gpu_backend_attempt_order, should_drop_transcript, whisper_runtime_preflight_issue,
         whisper_runtime_required, CUDA_BACKEND_UNSTABLE, CUDA_RUNTIME_REQUIRED_FILES,
     };
     use crate::state::Settings;

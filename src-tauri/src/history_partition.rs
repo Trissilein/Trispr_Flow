@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 use tracing::warn;
 
 use crate::state::{AppState, HistoryEntry};
@@ -310,7 +311,8 @@ pub(crate) fn save_entries_to_path(path: &Path, entries: &[HistoryEntry]) -> Res
 }
 
 #[tauri::command]
-pub(crate) fn save_transcript(
+pub(crate) async fn save_transcript(
+    app: AppHandle,
     filename: String,
     content: String,
     format: String,
@@ -322,11 +324,15 @@ pub(crate) fn save_transcript(
         _ => "txt",
     };
 
-    let file_path = rfd::FileDialog::new()
+    let file_path = app
+        .dialog()
+        .file()
         .set_file_name(&filename)
         .add_filter(&format.to_uppercase(), &[extension])
-        .save_file()
-        .ok_or("File save cancelled")?;
+        .blocking_save_file()
+        .ok_or("File save cancelled")?
+        .into_path()
+        .map_err(|e| e.to_string())?;
 
     std::fs::write(&file_path, content).map_err(|e| format!("Failed to write file: {}", e))?;
 

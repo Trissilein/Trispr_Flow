@@ -7,7 +7,6 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import type {
-  ModuleHealthStatus,
   OllamaRuntimeDiagnostics,
   OverlayHealthEvent,
   RuntimeDiagnostics,
@@ -161,38 +160,6 @@ describe("Block N N5d-S2 — Overlay health recovery", () => {
 
     expect(failedEvent.status).toBe("failed");
     expect(failedEvent.attempt).toBeGreaterThan(recoveringEvent.attempt);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// N5d-S3: Module Health Checks
-// ---------------------------------------------------------------------------
-describe("Block N N5d-S3 — Module health checks", () => {
-  it("reports healthy modules when runtime is available", () => {
-    const moduleHealth: ModuleHealthStatus[] = [
-      { module_id: "ai_refinement", state: "ok", detail: "Module active." },
-      { module_id: "opus", state: "ok", detail: "Module active." },
-    ];
-
-    expect(moduleHealth.every((item) => item.state === "ok")).toBe(true);
-  });
-
-  it("reports a degraded module while preserving the health of the others", () => {
-    const moduleHealth: ModuleHealthStatus[] = [
-      {
-        module_id: "opus",
-        state: "degraded",
-        detail: "Sidecar permission denied by OS.",
-      },
-      { module_id: "ai_refinement", state: "ok", detail: "Module active." },
-    ];
-
-    const opus = moduleHealth.find((item) => item.module_id === "opus");
-    const refinement = moduleHealth.find((item) => item.module_id === "ai_refinement");
-
-    expect(opus?.state).toBe("degraded");
-    expect(opus?.detail.toLowerCase()).toContain("permission");
-    expect(refinement?.state).toBe("ok");
   });
 });
 

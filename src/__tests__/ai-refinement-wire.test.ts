@@ -65,7 +65,6 @@ vi.hoisted(() => {
     <button id="topic-keywords-add"></button>
 
     <!-- Modules -->
-    <input id="modules-ai-refinement-toggle" type="checkbox" />
   `;
 });
 
@@ -151,9 +150,6 @@ function freshSettings(): Settings {
     postproc_llm_model: "",
     postproc_llm_prompt: "",
     topic_keywords: [],
-    module_settings: {
-      enabled_modules: ["ai_refinement"],
-    },
     providers: {
       ollama: {
         endpoint: "http://127.0.0.1:11434",
@@ -366,32 +362,10 @@ describe("language controls", () => {
   });
 });
 
-// ── AI fallback module gate ──────────────────────────────────────────────────
+// ── AI fallback enable toggle ────────────────────────────────────────────────
 
-describe("AI fallback module gate", () => {
-  it("aiFallbackEnabled: module disabled → checkbox is unchecked and no enable", async () => {
-    wireOnce();
-    setSettings({
-      ...freshSettings(),
-      module_settings: {
-        enabled_modules: [],
-        consented_permissions: {},
-        module_overrides: {},
-      }, // ai_refinement NOT in list
-    });
-    dom.aiFallbackEnabled!.checked = true;
-    dom.aiFallbackEnabled!.dispatchEvent(new Event("change"));
-    await vi.waitFor(() =>
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        "save_settings",
-        expect.anything(),
-      ),
-    );
-    expect(settings?.ai_fallback.enabled).toBe(false);
-    expect(dom.aiFallbackEnabled!.checked).toBe(false);
-  });
-
-  it("aiFallbackEnabled: module enabled + ollama detected → enables AI", async () => {
+describe("AI fallback enable toggle", () => {
+  it("aiFallbackEnabled: ollama detected → enables AI", async () => {
     wireOnce();
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === "detect_ollama_runtime") return { found: true };

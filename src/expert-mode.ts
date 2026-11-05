@@ -22,7 +22,6 @@ function persistExpertModePreference(enabled: boolean): void {
 function applyExpertModeClass(enabled: boolean): void {
   document.documentElement.classList.toggle("expert-mode", enabled);
   document.documentElement.classList.toggle("standard-mode", !enabled);
-  window.dispatchEvent(new Event("settings-visibility:mode-changed"));
   if (!enabled) {
     const activeExpertTab = document.querySelector<HTMLElement>(
       ".main-tab-content.active[data-expert-only='true']",

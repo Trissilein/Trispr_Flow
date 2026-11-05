@@ -57,7 +57,7 @@ git status -sb
 2. Sync progress documentation:
 - Update `STATUS.md`.
 - Update `CHANGELOG.md`.
-- Update any affected task/planning docs (for example `ROADMAP.md`, `docs/TASK_SCHEDULE.md`).
+- Update any affected task/planning docs (for example `ROADMAP.md`).
 
 3. Run a cleanup audit:
 - Check for build/image/temp artifacts and keep generated files out of commits.

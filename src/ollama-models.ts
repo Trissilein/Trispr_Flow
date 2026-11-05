@@ -354,9 +354,6 @@ function isOllamaProvider(): boolean {
 function shouldAutoStartLocalRuntime(): boolean {
   if (!settings?.ai_fallback || !settings.providers?.ollama) return false;
 
-  const moduleEnabled = settings.module_settings?.enabled_modules?.includes("ai_refinement") ?? false;
-  if (!moduleEnabled) return false;
-
   const aiFallback = settings.ai_fallback;
   if (!aiFallback.enabled) return false;
   return aiFallback.provider === "ollama";

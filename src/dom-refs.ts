@@ -14,11 +14,9 @@ export const bootstrapLabel = $("bootstrap-label") as HTMLSpanElement | null;
 export const tabBtnTranscription = $("tab-btn-transcription") as HTMLButtonElement | null;
 export const tabBtnSettings = $("tab-btn-settings") as HTMLButtonElement | null;
 export const tabBtnAiRefinement = $("tab-btn-ai-refinement") as HTMLButtonElement | null;
-export const tabBtnModules = $("tab-btn-modules") as HTMLButtonElement | null;
 export const tabTranscription = $("tab-transcription") as HTMLDivElement | null;
 export const tabSettings = $("tab-settings") as HTMLDivElement | null;
 export const tabAiRefinement = $("tab-ai-refinement") as HTMLDivElement | null;
-export const tabModules = $("tab-modules") as HTMLDivElement | null;
 export const expertModeToggle = $("expert-mode-toggle") as HTMLInputElement | null;
 export const expertModeLabel = $("expert-mode-label") as HTMLSpanElement | null;
 
@@ -204,7 +202,6 @@ export const overlayHealthNote = $("overlay-health-note") as HTMLSpanElement | n
 export const historyList = $("history-list");
 export const historyDeleteConversation = $("history-delete-conversation") as HTMLButtonElement | null;
 export const historyExport = $("history-export") as HTMLButtonElement | null;
-export const openModulesBtn = $("open-modules-btn") as HTMLButtonElement | null;
 export const historySearch = $("history-search") as HTMLInputElement | null;
 export const historySearchClear = $("history-search-clear") as HTMLButtonElement | null;
 export const conversationFontControls = $("conversation-font-controls");
@@ -221,8 +218,6 @@ export const refinementInspectorDiff = $("refinement-inspector-diff") as HTMLDiv
 export const refinementInspectorError = $("refinement-inspector-error") as HTMLDivElement | null;
 
 // Modules tab
-export const modulesList = $("modules-list") as HTMLDivElement | null;
-export const modulesStatus = $("modules-status") as HTMLSpanElement | null;
 
 
 // Export dialog
@@ -264,15 +259,6 @@ export const modelList = $("model-list");
 export const applyOverlayBtn = $("apply-overlay-btn") as HTMLButtonElement | null;
 
 // Module config modal
-export const moduleConfigModal = $("module-config-modal") as HTMLDivElement | null;
-export const moduleConfigModalBackdrop = $("module-config-modal-backdrop") as HTMLDivElement | null;
-export const moduleConfigModalClose = $("module-config-modal-close") as HTMLButtonElement | null;
-export const moduleConfigModalName = $("module-config-modal-name") as HTMLElement | null;
-export const moduleConfigModalMeta = $("module-config-modal-meta") as HTMLElement | null;
-export const moduleConfigModalDesc = $("module-config-modal-desc") as HTMLElement | null;
-export const moduleConfigModalUsage = $("module-config-modal-usage") as HTMLElement | null;
-export const moduleConfigModalDeps = $("module-config-modal-deps") as HTMLDivElement | null;
-export const moduleConfigModalFeedback = $("module-config-modal-feedback") as HTMLDivElement | null;
 
 // Model panel (queried by data attribute, not id)
 export const modelPanel =

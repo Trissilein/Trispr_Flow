@@ -11,7 +11,6 @@ mod gpu_process_memory;
 mod history_partition;
 mod hotkeys;
 mod models;
-mod modules;
 mod ollama_runtime;
 mod overlay;
 mod paste_arbiter;
@@ -60,23 +59,6 @@ pub(crate) use history_partition::{
 pub(crate) use hotkeys::validate_hotkey;
 pub(crate) use util::{frontend_heartbeat, log_frontend_event};
 
-/// Wrap a Tauri command body in `catch_unwind` so that a panic inside module
-/// code returns a clean `Err(String)` instead of crashing the app.
-/// Works for any command that returns `Result<T, String>`.
-#[macro_export]
-macro_rules! guarded_command {
-    ($label:expr, $body:expr) => {
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body)) {
-            Ok(result) => result,
-            Err(payload) => {
-                let msg = crate::format_panic_payload(&*payload);
-                tracing::error!("Command '{}' panicked: {}", $label, msg);
-                Err(format!("Internal error in {}: {}", $label, msg))
-            }
-        }
-    };
-}
-
 use crate::ai_fallback::provider::ping_ollama_quick;
 use crate::audio::list_audio_devices;
 use crate::history_partition::PartitionedHistory;
@@ -84,14 +66,9 @@ use crate::models::{
     check_model_available, clear_hidden_external_models, download_model, get_models_dir,
     hide_external_model, list_models, pick_model_dir, quantize_model, remove_model,
 };
-use crate::modules::{
-    canonicalize_module_id, health as module_health, normalize_module_settings,
-    package as module_package, registry as module_registry,
-};
 use crate::state::{
-    load_settings, normalize_ai_fallback_fields, normalize_ai_refinement_module_binding,
-    normalize_continuous_dump_fields, normalize_history_alias_fields, save_settings_file,
-    sync_model_dir_env, AI_REFINEMENT_MODULE_ID,
+    load_settings, normalize_ai_fallback_fields, normalize_continuous_dump_fields,
+    normalize_history_alias_fields, save_settings_file, sync_model_dir_env,
 };
 pub(crate) use ai_fallback::commands::{
     check_ollama_model_updates, delete_ollama_model, detect_ollama_runtime,
@@ -1011,8 +988,6 @@ pub(crate) fn save_settings_inner(app: &AppHandle, settings: &mut Settings) -> R
     normalize_ai_fallback_fields(settings);
     normalize_continuous_dump_fields(settings);
     normalize_history_alias_fields(settings);
-    normalize_module_settings(&mut settings.module_settings);
-    normalize_ai_refinement_module_binding(settings);
 
     info!("[DIAG] save_settings_inner: acquiring settings lock (write)");
     {
@@ -1172,66 +1147,6 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<(), Str
         .map_err(|e| format!("save_settings task failed: {}", e))?
 }
 
-#[tauri::command]
-fn list_modules(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Vec<crate::modules::ModuleDescriptor> {
-    let installed_package_ids = scan_installed_module_ids_lossy(&app);
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_registry::modules_as_descriptors_with_packages(
-        &settings.module_settings,
-        &installed_package_ids,
-    )
-}
-
-fn scan_installed_module_ids_lossy(app: &AppHandle) -> std::collections::HashSet<String> {
-    let modules_dir = crate::paths::resolve_modules_dir(app);
-    match module_package::scan_installed_module_ids(&modules_dir) {
-        Ok(module_ids) => module_ids,
-        Err(error) => {
-            warn!("Failed to scan installed module packages: {}", error);
-            std::collections::HashSet::new()
-        }
-    }
-}
-
-/// List modules published in the on-demand module index, annotated with local
-/// install state. Network call → run off the main thread.
-#[tauri::command]
-async fn list_available_modules(
-    app: AppHandle,
-) -> Result<Vec<crate::modules::delivery::AvailableModule>, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::modules::delivery::list_available(&app))
-        .await
-        .map_err(|error| format!("list_available_modules task failed: {error}"))?
-}
-
-/// Download, verify, unpack and install (or update) a module by id from the
-/// module index. Streams progress via the `module:download-progress` event.
-#[tauri::command]
-async fn download_module(
-    app: AppHandle,
-    module_id: String,
-) -> Result<module_package::ModulePackageInstallResult, String> {
-    let module_id = canonicalize_module_id(&module_id).to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::modules::delivery::download_and_install(&app, &module_id)
-    })
-    .await
-    .map_err(|error| format!("download_module task failed: {error}"))?
-}
-
-/// Remove an installed on-demand module from disk. Idempotent.
-#[tauri::command]
-async fn uninstall_module(app: AppHandle, module_id: String) -> Result<(), String> {
-    let module_id = canonicalize_module_id(&module_id).to_string();
-    crate::modules::delivery::uninstall(&app, &module_id)
-}
-
 fn should_autostart_ai_refinement_runtime(settings: &Settings) -> bool {
     capability_enabled(settings, RuntimeCapability::AiRefinement)
         && settings.ai_fallback.provider == "ollama"
@@ -1315,133 +1230,26 @@ pub(crate) fn schedule_ai_refinement_reenable_bootstrap(app: AppHandle) {
     });
 }
 
-#[tauri::command]
-fn enable_module(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    module_id: String,
-    grant_permissions: Option<Vec<String>>,
-) -> Result<serde_json::Value, String> {
-    guarded_command!("enable_module", {
-        crate::modules::lifecycle_coordinator::enable_module_actions(
-            &app,
-            state.inner(),
-            module_id,
-            grant_permissions,
-        )
-    })
-}
-
-#[tauri::command]
-fn disable_module(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    module_id: String,
-) -> Result<serde_json::Value, String> {
-    guarded_command!("disable_module", {
-        crate::modules::lifecycle_coordinator::disable_module_actions(
-            &app,
-            state.inner(),
-            module_id,
-        )
-    })
-}
-
-#[tauri::command]
-fn get_module_health(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    module_id: Option<String>,
-) -> Vec<crate::modules::ModuleHealthStatus> {
-    let installed_package_ids = scan_installed_module_ids_lossy(&app);
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    module_health::get_health_with_packages(
-        &settings.module_settings,
-        module_id.as_deref(),
-        &installed_package_ids,
-    )
-}
-
-#[tauri::command]
-fn check_module_updates(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    module_id: Option<String>,
-) -> Vec<crate::modules::ModuleUpdateInfo> {
-    let installed_package_ids = scan_installed_module_ids_lossy(&app);
-    let settings = state
-        .settings
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let updates = module_health::check_updates_with_packages(
-        &settings.module_settings,
-        module_id.as_deref(),
-        &installed_package_ids,
-    );
-    for update in &updates {
-        let _ = app.emit("module:update-available", update);
-    }
-    updates
-}
-
-fn module_enabled(settings: &Settings, module_id: &str) -> bool {
-    let module_id = canonicalize_module_id(module_id);
-    settings
-        .module_settings
-        .enabled_modules
-        .iter()
-        .any(|enabled| canonicalize_module_id(enabled) == module_id)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeCapability {
     AiRefinement,
 }
 
-impl RuntimeCapability {
-    pub(crate) fn module_id(self) -> &'static str {
-        match self {
-            Self::AiRefinement => AI_REFINEMENT_MODULE_ID,
-        }
-    }
-
-    fn setting_enabled(self, settings: &Settings) -> bool {
-        match self {
-            Self::AiRefinement => settings.ai_fallback.enabled,
-        }
-    }
-
-    fn module_disabled_message(self) -> &'static str {
-        match self {
-            Self::AiRefinement => {
-                "AI Refinement module is disabled. Enable module 'ai_refinement' first."
-            }
-        }
-    }
-
-    fn setting_disabled_message(self) -> &'static str {
-        match self {
-            Self::AiRefinement => "AI refinement is disabled in settings.",
-        }
-    }
-}
-
 pub(crate) fn capability_enabled(settings: &Settings, capability: RuntimeCapability) -> bool {
-    module_enabled(settings, capability.module_id()) && capability.setting_enabled(settings)
+    match capability {
+        RuntimeCapability::AiRefinement => settings.ai_fallback.enabled,
+    }
 }
 
 pub(crate) fn require_capability_enabled(
     settings: &Settings,
     capability: RuntimeCapability,
 ) -> Result<(), String> {
-    if !module_enabled(settings, capability.module_id()) {
-        return Err(capability.module_disabled_message().to_string());
-    }
-    if !capability.setting_enabled(settings) {
-        return Err(capability.setting_disabled_message().to_string());
+    if !capability_enabled(settings, capability) {
+        return Err(match capability {
+            RuntimeCapability::AiRefinement => "AI refinement is disabled in settings.",
+        }
+        .to_string());
     }
     Ok(())
 }
@@ -1451,66 +1259,25 @@ mod runtime_capability_gate_tests {
     use super::{capability_enabled, require_capability_enabled, RuntimeCapability};
     use crate::state::Settings;
 
-    fn settings_for_capability(
-        capability: RuntimeCapability,
-        module_enabled: bool,
-        setting_enabled: bool,
-    ) -> Settings {
+    #[test]
+    fn capability_follows_the_setting_flag() {
         let mut settings = Settings::default();
-        if module_enabled {
-            settings
-                .module_settings
-                .enabled_modules
-                .insert(capability.module_id().to_string());
-        }
-        match capability {
-            RuntimeCapability::AiRefinement => settings.ai_fallback.enabled = setting_enabled,
-        }
-        settings
-    }
-
-    #[test]
-    fn capability_enabled_requires_module_and_setting_flag() {
-        let refinement_enabled =
-            settings_for_capability(RuntimeCapability::AiRefinement, true, true);
+        settings.ai_fallback.enabled = true;
         assert!(capability_enabled(
-            &refinement_enabled,
+            &settings,
             RuntimeCapability::AiRefinement
         ));
+        assert!(require_capability_enabled(&settings, RuntimeCapability::AiRefinement).is_ok());
 
-        let refinement_missing_module =
-            settings_for_capability(RuntimeCapability::AiRefinement, false, true);
+        settings.ai_fallback.enabled = false;
         assert!(!capability_enabled(
-            &refinement_missing_module,
+            &settings,
             RuntimeCapability::AiRefinement
         ));
-
-        let refinement_missing_setting =
-            settings_for_capability(RuntimeCapability::AiRefinement, true, false);
-        assert!(!capability_enabled(
-            &refinement_missing_setting,
-            RuntimeCapability::AiRefinement
-        ));
-    }
-
-    #[test]
-    fn require_capability_reports_module_and_setting_failures() {
-        let ai_module_disabled =
-            settings_for_capability(RuntimeCapability::AiRefinement, false, true);
-        let ai_module_error =
-            require_capability_enabled(&ai_module_disabled, RuntimeCapability::AiRefinement)
-                .unwrap_err();
         assert_eq!(
-            ai_module_error,
-            "AI Refinement module is disabled. Enable module 'ai_refinement' first."
+            require_capability_enabled(&settings, RuntimeCapability::AiRefinement).unwrap_err(),
+            "AI refinement is disabled in settings."
         );
-
-        let ai_setting_disabled =
-            settings_for_capability(RuntimeCapability::AiRefinement, true, false);
-        let ai_setting_error =
-            require_capability_enabled(&ai_setting_disabled, RuntimeCapability::AiRefinement)
-                .unwrap_err();
-        assert_eq!(ai_setting_error, "AI refinement is disabled in settings.");
     }
 }
 
@@ -2168,20 +1935,8 @@ fn send_paste_keystroke() -> Result<(), String> {
 fn try_load_tray_icon(icon_path: &std::path::Path) -> Option<tauri::image::Image<'static>> {
     use tauri::image::Image;
 
-    match std::fs::read(icon_path) {
-        Ok(png_data) => {
-            match image::load_from_memory_with_format(&png_data, image::ImageFormat::Png) {
-                Ok(img) => {
-                    let rgba_img = img.to_rgba8();
-                    let (width, height) = rgba_img.dimensions();
-                    return Some(Image::new_owned(rgba_img.into_raw(), width, height));
-                }
-                Err(_) => {}
-            }
-        }
-        Err(_) => {}
-    }
-    None
+    let png_data = std::fs::read(icon_path).ok()?;
+    Image::from_bytes(&png_data).ok()
 }
 
 fn create_fallback_icon() -> tauri::image::Image<'static> {
@@ -2382,11 +2137,7 @@ fn tray_icon_target_size(app: &AppHandle) -> usize {
 fn refresh_tray_icon(app: &AppHandle, frame: usize) {
     let capture_state = TRAY_CAPTURE_STATE.load(Ordering::Relaxed);
     let recording_active = capture_state == 1;
-    let effective_frame = if recording_active {
-        frame
-    } else {
-        0
-    };
+    let effective_frame = if recording_active { frame } else { 0 };
 
     if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
         let size = tray_icon_target_size(app);
@@ -3339,14 +3090,6 @@ pub fn run() {
             save_settings,
             save_window_state,
             save_window_visibility_state,
-            list_modules,
-            enable_module,
-            disable_module,
-            get_module_health,
-            check_module_updates,
-            list_available_modules,
-            download_module,
-            uninstall_module,
             save_transcript,
             list_audio_devices,
             list_models,

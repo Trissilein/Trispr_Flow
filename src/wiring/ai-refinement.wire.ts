@@ -66,22 +66,7 @@ import { onChangePersist, scheduleSettingsRender } from "./wire-helpers";
 
 // ── Module-level constants ──────────────────────────────────────────────────
 
-const AI_REFINEMENT_MODULE_ID = "ai_refinement";
-const AI_REFINEMENT_MIGRATION_FLAG_KEY = "ai_refinement.migrated_legacy";
-
 // ── Private helpers ─────────────────────────────────────────────────────────
-
-// Duplicated one-liners per OQ-3 clause 3 (private, not exported; matching
-// the pattern established in refinement-pipeline-graph.ts).
-function isModuleEnabled(moduleId: string): boolean {
-  return (
-    settings?.module_settings?.enabled_modules?.includes(moduleId) ?? false
-  );
-}
-
-function isAiRefinementModuleEnabled(): boolean {
-  return isModuleEnabled(AI_REFINEMENT_MODULE_ID);
-}
 
 // Renders the three UI sections that always need to be refreshed together after
 // a local/online runtime change or model-import action.
@@ -89,42 +74,6 @@ function refreshAIUi(): void {
   renderAIFallbackSettingsUi();
   renderOllamaModelManager();
   renderHero();
-}
-
-function normalizeAiRefinementModuleBindingInSettings(): void {
-  if (!settings) return;
-  settings.module_settings ??= {
-    enabled_modules: [],
-    consented_permissions: {},
-    module_overrides: {},
-  };
-  settings.module_settings.enabled_modules ??= [];
-  settings.module_settings.consented_permissions ??= {};
-  settings.module_settings.module_overrides ??= {};
-  settings.module_settings.enabled_modules = Array.from(
-    new Set(settings.module_settings.enabled_modules),
-  );
-
-  const overrides = settings.module_settings.module_overrides;
-  const migrationDone = overrides[AI_REFINEMENT_MIGRATION_FLAG_KEY] === true;
-  if (
-    settings.ai_fallback.enabled &&
-    !settings.module_settings.enabled_modules.includes(
-      AI_REFINEMENT_MODULE_ID,
-    ) &&
-    !migrationDone
-  ) {
-    settings.module_settings.enabled_modules.push(AI_REFINEMENT_MODULE_ID);
-  }
-
-  const moduleEnabledNow = settings.module_settings.enabled_modules.includes(
-    AI_REFINEMENT_MODULE_ID,
-  );
-  if (!moduleEnabledNow) {
-    settings.ai_fallback.enabled = false;
-    settings.postproc_llm_enabled = false;
-  }
-  overrides[AI_REFINEMENT_MIGRATION_FLAG_KEY] = true;
 }
 
 function isLaneControlTarget(target: EventTarget | null): boolean {
@@ -419,7 +368,6 @@ function ensureAIFallbackSettingsDefaults() {
     local_ai_wizard_completed: false,
     local_ai_wizard_pending: true,
   };
-  normalizeAiRefinementModuleBindingInSettings();
   syncDerivedLanguageSettings();
 }
 
@@ -561,21 +509,6 @@ export function wireAiRefinement(): void {
   dom.aiFallbackEnabled?.addEventListener("change", async () => {
     if (!settings) return;
     ensureAIFallbackSettingsDefaults();
-    if (!isAiRefinementModuleEnabled()) {
-      dom.aiFallbackEnabled!.checked = false;
-      settings.ai_fallback.enabled = false;
-      settings.postproc_llm_enabled = false;
-      await persistSettings();
-      renderAIFallbackSettingsUi();
-      renderHero();
-      showToast({
-        type: "warning",
-        title: "Module disabled",
-        message: "Enable module 'ai_refinement' first.",
-        duration: 3200,
-      });
-      return;
-    }
     const enabling = dom.aiFallbackEnabled!.checked;
 
     if (enabling) {

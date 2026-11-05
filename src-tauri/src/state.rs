@@ -7,7 +7,6 @@ use crate::constants::{
     VAD_THRESHOLD_SUSTAIN_DEFAULT,
 };
 use crate::history_partition::PartitionedHistory;
-use crate::modules::{normalize_module_settings, ModuleSettings};
 use crate::overlay::OverlayController;
 use crate::paths::resolve_config_path;
 use serde::{Deserialize, Serialize};
@@ -237,9 +236,6 @@ fn default_local_backend_preference() -> String {
     "auto".to_string()
 }
 
-pub(crate) const AI_REFINEMENT_MODULE_ID: &str = "ai_refinement";
-const AI_REFINEMENT_MIGRATION_FLAG_KEY: &str = "ai_refinement.migrated_legacy";
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -255,8 +251,6 @@ pub(crate) struct Settings {
     pub(crate) providers: AIProvidersSettings,
     // First-run setup flags
     pub(crate) setup: SetupSettings,
-    // Managed module platform settings
-    pub(crate) module_settings: ModuleSettings,
     pub(crate) audio_cues: bool,
     pub(crate) audio_cues_volume: f32,
     #[serde(default)]
@@ -389,7 +383,6 @@ impl Default for Settings {
       ai_fallback: AIFallbackSettings::default(),
       providers: AIProvidersSettings::default(),
       setup: SetupSettings::default(),
-      module_settings: ModuleSettings::default(),
       audio_cues: true,
       audio_cues_volume: 0.3,
       diagnostic_logging_enabled: false,
@@ -1007,8 +1000,6 @@ pub(crate) fn load_settings(app: &AppHandle) -> Settings {
             normalize_topic_keywords_fields(&mut settings);
             // Normalize v0.7 AI fallback settings and legacy compatibility fields.
             normalize_ai_fallback_fields(&mut settings);
-            normalize_module_settings(&mut settings.module_settings);
-            normalize_ai_refinement_module_binding(&mut settings);
             if settings.setup.local_ai_wizard_completed {
                 settings.setup.local_ai_wizard_pending = false;
             }
@@ -1130,42 +1121,6 @@ pub(crate) fn normalize_ai_fallback_fields(settings: &mut Settings) {
     }
 }
 
-pub(crate) fn normalize_ai_refinement_module_binding(settings: &mut Settings) {
-    let migration_done = settings
-        .module_settings
-        .module_overrides
-        .get(AI_REFINEMENT_MIGRATION_FLAG_KEY)
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-
-    if settings.ai_fallback.enabled
-        && !settings
-            .module_settings
-            .enabled_modules
-            .contains(AI_REFINEMENT_MODULE_ID)
-        && !migration_done
-    {
-        settings
-            .module_settings
-            .enabled_modules
-            .insert(AI_REFINEMENT_MODULE_ID.to_string());
-    }
-
-    if !settings
-        .module_settings
-        .enabled_modules
-        .contains(AI_REFINEMENT_MODULE_ID)
-    {
-        settings.ai_fallback.enabled = false;
-        settings.postproc_llm_enabled = false;
-    }
-
-    settings.module_settings.module_overrides.insert(
-        AI_REFINEMENT_MIGRATION_FLAG_KEY.to_string(),
-        serde_json::Value::Bool(true),
-    );
-}
-
 pub(crate) fn normalize_continuous_dump_fields(settings: &mut Settings) {
     if settings.continuous_dump_profile != "balanced"
         && settings.continuous_dump_profile != "low_latency"
@@ -1219,9 +1174,7 @@ pub(crate) fn speaker_name_for_source(settings: &Settings, source: &str) -> Stri
 pub(crate) fn save_settings_file(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = resolve_config_path(app, "settings.json");
     let mut persisted = settings.clone();
-    normalize_module_settings(&mut persisted.module_settings);
     normalize_history_alias_fields(&mut persisted);
-    normalize_ai_refinement_module_binding(&mut persisted);
     let raw = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     // Atomic write: write to .tmp then rename to avoid partial/corrupted JSON on crash.
     let tmp_path = path.with_extension("json.tmp");
@@ -1454,7 +1407,6 @@ pub(crate) fn mark_entry_refinement_failed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     #[test]
     fn legacy_tray_start_state_normalizes_to_normal() {
@@ -1503,46 +1455,6 @@ mod tests {
     }
 
     #[test]
-    fn ai_refinement_module_migration_preserves_legacy_enabled_state() {
-        let mut settings = Settings::default();
-        settings.ai_fallback.enabled = true;
-        settings.postproc_llm_enabled = true;
-
-        normalize_ai_fallback_fields(&mut settings);
-        normalize_module_settings(&mut settings.module_settings);
-        normalize_ai_refinement_module_binding(&mut settings);
-
-        assert!(settings.ai_fallback.enabled);
-        assert!(settings.postproc_llm_enabled);
-        assert!(settings
-            .module_settings
-            .enabled_modules
-            .contains(AI_REFINEMENT_MODULE_ID));
-    }
-
-    #[test]
-    fn ai_refinement_module_disabled_forces_hard_off() {
-        let mut settings = Settings::default();
-        settings.ai_fallback.enabled = true;
-        settings.postproc_llm_enabled = true;
-        settings.module_settings.module_overrides.insert(
-            "ai_refinement.migrated_legacy".to_string(),
-            serde_json::Value::Bool(true),
-        );
-
-        normalize_ai_fallback_fields(&mut settings);
-        normalize_module_settings(&mut settings.module_settings);
-        normalize_ai_refinement_module_binding(&mut settings);
-
-        assert!(!settings.ai_fallback.enabled);
-        assert!(!settings.postproc_llm_enabled);
-        assert!(!settings
-            .module_settings
-            .enabled_modules
-            .contains(AI_REFINEMENT_MODULE_ID));
-    }
-
-    #[test]
     fn settings_with_removed_assistant_gdd_confluence_task_capture_fields_still_load() {
         // Shape of a settings.json written before the Assistant / GDD / Confluence /
         // Task Capture modules were removed. Unknown fields are ignored by serde.
@@ -1568,25 +1480,30 @@ mod tests {
             }
         }"#;
 
-        let mut settings: Settings =
+        let settings: Settings =
             serde_json::from_str(raw).expect("old settings.json must still deserialize");
-        normalize_module_settings(&mut settings.module_settings);
 
         assert_eq!(settings.mode, "ptt");
         assert_eq!(settings.hotkey_ptt, "CommandOrControl+Shift+Space");
-        assert_eq!(
-            settings.module_settings.enabled_modules,
-            HashSet::from(["ai_refinement".to_string()])
-        );
-        assert!(settings.module_settings.consented_permissions.is_empty());
-        assert_eq!(
-            settings
-                .module_settings
-                .module_overrides
-                .keys()
-                .collect::<Vec<_>>(),
-            vec!["ai_refinement.migrated_legacy"]
-        );
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(!rewritten.contains("module_settings"));
+    }
+
+    #[test]
+    fn settings_with_removed_module_settings_still_load_and_keep_ai_refinement_flag() {
+        let raw = r#"{
+            "ai_fallback": { "enabled": true, "model": "gemma4:e4b" },
+            "module_settings": {
+                "enabled_modules": ["ai_refinement", "opus"],
+                "consented_permissions": { "opus": ["filesystem_exports"] },
+                "module_overrides": { "ai_refinement.migrated_legacy": true }
+            }
+        }"#;
+        let settings: Settings = serde_json::from_str(raw).expect("old settings.json must load");
+        assert!(settings.ai_fallback.enabled);
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(!rewritten.contains("module_settings"));
+        assert!(!rewritten.contains("enabled_modules"));
     }
 
     #[test]
@@ -1668,25 +1585,11 @@ mod tests {
             }
         }"##;
 
-        let mut settings: Settings =
+        let settings: Settings =
             serde_json::from_str(raw).expect("old settings.json must still deserialize");
-        normalize_module_settings(&mut settings.module_settings);
 
         assert_eq!(settings.mode, "ptt");
         assert_eq!(settings.hotkey_ptt, "CommandOrControl+Shift+Space");
-        assert_eq!(
-            settings.module_settings.enabled_modules,
-            HashSet::from(["ai_refinement".to_string()])
-        );
-        assert!(settings.module_settings.consented_permissions.is_empty());
-        assert_eq!(
-            settings
-                .module_settings
-                .module_overrides
-                .keys()
-                .collect::<Vec<_>>(),
-            vec!["ai_refinement.migrated_legacy"]
-        );
         // Removed fields must not be written back out.
         let rewritten = serde_json::to_string(&settings).expect("serialize settings");
         for removed in [

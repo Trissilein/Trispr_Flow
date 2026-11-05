@@ -1,9 +1,6 @@
 // Type definitions for Trispr Flow application
 
 export type OverlayRefiningIndicatorPreset = "subtle" | "standard" | "intense";
-export type ModuleId = "ai_refinement";
-export type ModuleState = "not_installed" | "installed" | "enabled" | "active" | "error";
-export type ModulePermission = string;
 export type RefinementPromptPreset =
   | "wording"
   | "summary"
@@ -34,26 +31,6 @@ export interface EditSubstitution {
   count: number;
   first_seen_ms: number;
   last_seen_ms: number;
-}
-
-export interface ModuleDescriptor {
-  id: ModuleId | string;
-  name: string;
-  version: string;
-  state: ModuleState;
-  dependencies: string[];
-  permissions: ModulePermission[];
-  restart_required: boolean;
-  last_error?: string | null;
-  bundled: boolean;
-  core: boolean;
-  toggleable: boolean;
-}
-
-export interface ModuleSettings {
-  enabled_modules: string[];
-  consented_permissions: Record<string, string[]>;
-  module_overrides: Record<string, unknown>;
 }
 
 export interface AIFallbackSettings {
@@ -108,7 +85,6 @@ export interface Settings {
   ai_fallback: AIFallbackSettings;
   providers: AIProvidersSettings;
   setup: SetupSettings;
-  module_settings?: ModuleSettings;
   audio_cues: boolean;
   audio_cues_volume: number;
   diagnostic_logging_enabled?: boolean;
@@ -691,15 +667,3 @@ export interface PartitionInfo {
   is_active: boolean;
 }
 
-export interface ModuleHealthStatus {
-  module_id: string;
-  state: "ok" | "needs_setup" | "fallback_active" | "local_warning" | "release_blocker" | "degraded" | "error";
-  detail: string;
-}
-
-export interface ModuleUpdateInfo {
-  module_id: string;
-  current_version: string;
-  latest_version: string;
-  update_available: boolean;
-}

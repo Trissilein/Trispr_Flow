@@ -35,9 +35,7 @@ pub(crate) fn process_transcript(
     }
 
     // Stage 2: Custom Vocabulary (sync, <2ms)
-    if settings.postproc_custom_vocab_enabled && !settings.postproc_custom_vocab.is_empty() {
-        result = apply_custom_vocabulary(&result, &settings.postproc_custom_vocab);
-    }
+    result = apply_custom_vocab_rules(&result, settings);
 
     // Stage 3 is intentionally skipped here to avoid blocking transcription.
     // AI refinement runs async via dedicated pipeline events.
@@ -335,59 +333,91 @@ fn normalize_numbers(text: &str, lang: &str) -> String {
     result
 }
 
+/// Apply the custom vocabulary rules (when enabled and non-empty). Independent of the other
+/// post-processing stages, so learned rules also work with `postproc_enabled` off.
+pub(crate) fn apply_custom_vocab_rules(text: &str, settings: &Settings) -> String {
+    if settings.postproc_custom_vocab_enabled && !settings.postproc_custom_vocab.is_empty() {
+        apply_custom_vocabulary(text, &settings.postproc_custom_vocab)
+    } else {
+        text.to_string()
+    }
+}
+
+/// Longest rule key accepted (chars). Longer keys are not word/phrase corrections and would only
+/// bloat the combined regex.
+const MAX_RULE_KEY_CHARS: usize = 128;
+
 /// Apply custom vocabulary replacements with word boundary matching
 ///
-/// Uses HashMap for case-sensitive replacements.
-/// Word boundary matching prevents partial replacements
-/// (e.g., "api" → "API" but "apikey" stays "apikey")
+/// Case-sensitive, whole-word/phrase matches (e.g. "api" → "API" but "apikey" stays "apikey").
+/// All rules run in ONE pass over the text: the longest key wins at each position (ties broken
+/// alphabetically, so the result never depends on HashMap order), a replacement is never matched
+/// by another rule, and the replacement text is inserted literally (`$1` stays `$1`).
 fn apply_custom_vocabulary(text: &str, vocab: &HashMap<String, String>) -> String {
     use std::sync::{Mutex, OnceLock};
 
     static REGEX_CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
 
-    if text.is_empty() || vocab.is_empty() {
+    let mut rules: Vec<(&str, &str)> = vocab
+        .iter()
+        .map(|(from, to)| (from.as_str(), to.as_str()))
+        .filter(|(from, to)| {
+            !from.is_empty() && from.chars().count() <= MAX_RULE_KEY_CHARS && from != to
+        })
+        .collect();
+    if text.is_empty() || rules.is_empty() {
         return text.to_string();
     }
+    rules.sort_by(|a, b| {
+        b.0.chars()
+            .count()
+            .cmp(&a.0.chars().count())
+            .then_with(|| a.0.cmp(b.0))
+    });
 
-    let cache = REGEX_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut result = text.to_string();
+    // Regex alternation is leftmost-first, so listing the longest keys first makes the
+    // longest rule win where rules overlap ("Mem Palace" before "Palace").
+    let alternation = rules
+        .iter()
+        .map(|(from, _)| regex::escape(from))
+        .collect::<Vec<_>>()
+        .join("|");
+    let pattern = format!(r"\b(?:{})\b", alternation);
 
-    // Apply each vocabulary replacement with word boundary matching
-    for (original, replacement) in vocab {
-        // Create regex pattern with word boundaries
-        // Use regex::escape to safely handle special regex characters in user input
-        let pattern = format!(r"\b{}\b", regex::escape(original));
-
-        // Look up or compile and cache the regex
-        let re_opt = if let Ok(mut guard) = cache.lock() {
-            Some(
-                guard
-                    .entry(pattern.clone())
-                    .or_insert_with(|| match regex::Regex::new(&pattern) {
-                        Ok(re) => re,
-                        Err(e) => {
-                            use tracing::warn;
-                            warn!(
-                                "Failed to compile regex for custom vocabulary '{}': {}",
-                                original, e
-                            );
-                            // Fallback: a regex that never matches (the regex crate has
-                            // no look-around, so `(?!x)x` would fail to compile)
-                            regex::Regex::new(r"[^\s\S]").unwrap()
+    let compiled = match REGEX_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        Ok(mut cache) => {
+            if !cache.contains_key(&pattern) {
+                match regex::Regex::new(&pattern) {
+                    Ok(re) => {
+                        if cache.len() >= 8 {
+                            cache.clear();
                         }
-                    })
-                    .clone(),
-            )
-        } else {
-            None
-        };
-
-        if let Some(re) = re_opt {
-            result = re.replace_all(&result, replacement.as_str()).to_string();
+                        cache.insert(pattern.clone(), re);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Custom vocabulary rules skipped, regex failed: {}", e);
+                        return text.to_string();
+                    }
+                }
+            }
+            cache.get(&pattern).cloned()
         }
-    }
+        Err(_) => regex::Regex::new(&pattern).ok(),
+    };
+    let Some(re) = compiled else {
+        return text.to_string();
+    };
 
-    result
+    let lookup: HashMap<&str, &str> = rules.into_iter().collect();
+    re.replace_all(text, |caps: &regex::Captures| {
+        lookup
+            .get(&caps[0])
+            .map_or_else(|| caps[0].to_string(), |to| to.to_string())
+    })
+    .into_owned()
 }
 
 #[cfg(test)]
@@ -705,5 +735,89 @@ mod tests {
             apply_custom_vocabulary("say vocabprobe now", &vocab),
             "say VOCABPROBE now"
         );
+    }
+
+    fn vocab(rules: &[(&str, &str)]) -> HashMap<String, String> {
+        rules
+            .iter()
+            .map(|(from, to)| (from.to_string(), to.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn test_custom_vocabulary_replacement_is_literal_no_dollar_expansion() {
+        let rules = vocab(&[("price", "$1 and $& and ${x} cost")]);
+        assert_eq!(
+            apply_custom_vocabulary("the price is", &rules),
+            "the $1 and $& and ${x} cost is"
+        );
+    }
+
+    #[test]
+    fn test_custom_vocabulary_unicode_and_word_boundaries() {
+        let rules = vocab(&[("Müller", "Mueller"), ("über", "ueber"), ("api", "API")]);
+        assert_eq!(
+            apply_custom_vocabulary("Herr Müller ist über Müllerei und apikey api", &rules),
+            "Herr Mueller ist ueber Müllerei und apikey API"
+        );
+    }
+
+    #[test]
+    fn test_custom_vocabulary_is_case_sensitive_so_sentence_start_needs_its_own_rule() {
+        let only_capitalized = vocab(&[("Trispa", "Trispr")]);
+        assert_eq!(
+            apply_custom_vocabulary("Trispa läuft. Ich sage trispa.", &only_capitalized),
+            "Trispr läuft. Ich sage trispa."
+        );
+        let both = vocab(&[("Trispa", "Trispr"), ("trispa", "Trispr")]);
+        assert_eq!(
+            apply_custom_vocabulary("Trispa läuft. Ich sage trispa.", &both),
+            "Trispr läuft. Ich sage Trispr."
+        );
+    }
+
+    #[test]
+    fn test_custom_vocabulary_overlapping_rules_longest_key_wins_regardless_of_map_order() {
+        // Fresh HashMaps use different random seeds, so iteration order varies between runs.
+        for _ in 0..50 {
+            let rules = vocab(&[
+                ("Palace", "Castle"),
+                ("Mem Palace", "MemPalace"),
+                ("Mem", "Memory"),
+            ]);
+            assert_eq!(
+                apply_custom_vocabulary("Mem Palace und Palace und Mem", &rules),
+                "MemPalace und Castle und Memory"
+            );
+        }
+    }
+
+    #[test]
+    fn test_custom_vocabulary_single_pass_does_not_chain_rules() {
+        let rules = vocab(&[("alpha", "beta"), ("beta", "gamma")]);
+        assert_eq!(apply_custom_vocabulary("alpha beta", &rules), "beta gamma");
+    }
+
+    #[test]
+    fn test_custom_vocabulary_regex_metacharacters_in_keys_are_literal() {
+        let rules = vocab(&[("a.b", "X"), ("(foo)", "Y")]);
+        assert_eq!(apply_custom_vocabulary("a.b axb", &rules), "X axb");
+    }
+
+    #[test]
+    fn test_custom_vocabulary_ignores_empty_noop_and_overlong_rules() {
+        let rules = vocab(&[("", "X"), ("same", "same"), ("ok", "fine")]);
+        assert_eq!(apply_custom_vocabulary("same ok", &rules), "same fine");
+    }
+
+    #[test]
+    fn test_custom_vocab_rules_need_only_the_vocab_toggle_not_postproc_enabled() {
+        let mut settings = Settings::default();
+        settings.postproc_enabled = false;
+        settings.postproc_custom_vocab = vocab(&[("Trispa", "Trispr")]);
+        settings.postproc_custom_vocab_enabled = false;
+        assert_eq!(apply_custom_vocab_rules("Trispa", &settings), "Trispa");
+        settings.postproc_custom_vocab_enabled = true;
+        assert_eq!(apply_custom_vocab_rules("Trispa", &settings), "Trispr");
     }
 }

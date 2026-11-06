@@ -22,6 +22,7 @@ mod state;
 mod transcription;
 mod uiautomation_capture;
 mod util;
+mod vocab_hints;
 mod whisper_runtime;
 mod whisper_server;
 

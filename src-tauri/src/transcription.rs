@@ -505,42 +505,6 @@ fn resolve_whisper_gpu_layers(settings: &Settings) -> Option<usize> {
     parse_env_usize("TRISPR_WHISPER_GPU_LAYERS").or(settings.whisper_gpu_layers)
 }
 
-/// Build the initial prompt string for whisper-cli from the user's vocabulary
-/// terms list. Returns `None` when no usable terms exist. The prompt is
-/// comma-separated and capped in length (whisper's prompt window is 224
-/// tokens ≈ 1024 chars of typical text; we cap at 900 chars to stay safely
-/// below that limit).
-fn build_whisper_initial_prompt(terms: &[String]) -> Option<String> {
-    const MAX_PROMPT_CHARS: usize = 900;
-    let mut cleaned: Vec<&str> = terms
-        .iter()
-        .map(|t| t.trim())
-        .filter(|t| !t.is_empty())
-        .collect();
-    if cleaned.is_empty() {
-        return None;
-    }
-    // Remove duplicates while preserving order.
-    let mut seen = std::collections::HashSet::new();
-    cleaned.retain(|t| seen.insert(t.to_lowercase()));
-
-    // Truncate to fit within the char budget, prefer keeping earlier terms.
-    let mut out = String::new();
-    for term in cleaned {
-        let delim = if out.is_empty() { "" } else { ", " };
-        if out.len() + delim.len() + term.len() > MAX_PROMPT_CHARS {
-            break;
-        }
-        out.push_str(delim);
-        out.push_str(term);
-    }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
-}
-
 fn resolve_whisper_threads(gpu_hint: bool) -> usize {
     if let Some(explicit) = parse_env_usize("TRISPR_WHISPER_THREADS") {
         return explicit.max(1);
@@ -1108,7 +1072,13 @@ fn transcribe_local(
             }
             let t_server = std::time::Instant::now();
 
-            match crate::whisper_server::transcribe_via_server(wav_bytes, port, &lang_str) {
+            let vocab_prompt = crate::vocab_hints::whisper_prompt(settings);
+            match crate::whisper_server::transcribe_via_server(
+                wav_bytes,
+                port,
+                &lang_str,
+                vocab_prompt.as_deref(),
+            ) {
                 Ok(text) => {
                     let server_ms = t_server.elapsed().as_millis() as u64;
                     if diagnostics_enabled {
@@ -1473,8 +1443,8 @@ fn run_whisper_cli(
     // Inject vocabulary terms as whisper-cli initial prompt. Whisper uses
     // this to bias recognition toward the listed words (proper nouns,
     // acronyms, project jargon), so they come out right on the first pass
-    // instead of depending on post-processing.
-    if let Some(prompt) = build_whisper_initial_prompt(&settings.vocab_terms) {
+    // instead of depending on post-processing. The server path sends the same prompt.
+    if let Some(prompt) = crate::vocab_hints::whisper_prompt(settings) {
         command.arg("--prompt").arg(prompt);
     }
 

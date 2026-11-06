@@ -9,6 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import indexHtml from "../../index.html?raw";
 
 // Inject DOM nodes before any module import so dom-refs.ts sees them.
 vi.hoisted(() => {
@@ -22,6 +23,7 @@ vi.hoisted(() => {
 
 import { addVocabRow, renderVocabulary, renderLearnedVocabChips } from "../settings/vocabulary.settings";
 import { setSettings, settings } from "../state";
+import { PROMOTION_THRESHOLD } from "../vocab-auto-learn";
 import type { Settings } from "../types";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -180,5 +182,105 @@ describe("renderLearnedVocabChips", () => {
     setSettings(makeSettings({ vocab_terms: [], edit_substitutions: [] }));
     renderLearnedVocabChips();
     expect(termsCount().textContent).toBe("");
+  });
+});
+
+// --- learned pairs, pending ×, copy ---
+
+describe("learned vocabulary list", () => {
+  const learnedPair = {
+    from: "Trispa",
+    to: "Trispr",
+    count: 3,
+    first_seen_ms: 1,
+    last_seen_ms: 5,
+    promoted: true,
+  };
+  const pendingPair = { from: "Kodex", to: "Codex", count: 1, first_seen_ms: 1, last_seen_ms: 2 };
+
+  beforeEach(() => {
+    termsList().innerHTML = "";
+    observingList().innerHTML = "";
+    termsCount().textContent = "";
+    mockedInvoke.mockReset();
+    mockedInvoke.mockResolvedValue(undefined);
+  });
+
+  it("shows a promoted pair as 'from → to' and not the duplicate term chip", () => {
+    setSettings(
+      makeSettings({
+        vocab_terms: ["Trispr", "Ollama"],
+        edit_substitutions: [learnedPair],
+        postproc_custom_vocab: { Trispa: "Trispr" },
+      }),
+    );
+    renderLearnedVocabChips();
+    const labels = [...termsList().querySelectorAll(".vocab-term-chip")].map(
+      (c) => c.querySelector("span")?.textContent,
+    );
+    expect(labels).toEqual(["Trispa → Trispr", "Ollama"]);
+  });
+
+  it("keeps promoted pairs out of the pending list and out of the 'observed' count", () => {
+    setSettings(
+      makeSettings({ vocab_terms: ["Trispr"], edit_substitutions: [learnedPair, pendingPair] }),
+    );
+    renderLearnedVocabChips();
+    expect(observingList().querySelectorAll(".vocab-term-chip")).toHaveLength(1);
+    expect(observingList().textContent).toContain("Kodex → Codex");
+    expect(termsCount().textContent).toContain("1 observed");
+  });
+
+  it("× on a pending chip discards that pair", async () => {
+    setSettings(makeSettings({ vocab_terms: [], edit_substitutions: [pendingPair] }));
+    renderLearnedVocabChips();
+    observingList().querySelector<HTMLButtonElement>(".vocab-term-chip-dismiss")!.click();
+    await vi.waitFor(() =>
+      expect(observingList().querySelectorAll(".vocab-term-chip")).toHaveLength(0),
+    );
+    expect(settings?.edit_substitutions).toEqual([]);
+  });
+
+  it("× on a learned pair chip removes the pair, its rules and the term", async () => {
+    setSettings(
+      makeSettings({
+        vocab_terms: ["Trispr"],
+        edit_substitutions: [learnedPair],
+        postproc_custom_vocab: { Trispa: "Trispr" },
+      }),
+    );
+    renderLearnedVocabChips();
+    termsList().querySelector<HTMLButtonElement>(".vocab-term-chip-dismiss")!.click();
+    await vi.waitFor(() =>
+      expect(termsList().querySelectorAll(".vocab-term-chip")).toHaveLength(0),
+    );
+    expect(settings?.postproc_custom_vocab).toEqual({});
+    expect(settings?.vocab_terms).toEqual([]);
+    expect(settings?.edit_substitutions).toEqual([]);
+  });
+
+  it("× on a plain term chip removes the term and every rule pointing at it", async () => {
+    setSettings(
+      makeSettings({
+        vocab_terms: ["GDD"],
+        edit_substitutions: [],
+        postproc_custom_vocab: { gdd: "GDD", api: "API" },
+      }),
+    );
+    renderLearnedVocabChips();
+    termsList().querySelector<HTMLButtonElement>(".vocab-term-chip-dismiss")!.click();
+    await vi.waitFor(() => expect(settings?.vocab_terms).toEqual([]));
+    expect(settings?.postproc_custom_vocab).toEqual({ api: "API" });
+  });
+
+  it("index.html explains the real threshold and keeps the list out of expert-only", () => {
+    expect(indexHtml).not.toContain("3 repetitions");
+    expect(indexHtml).toContain(`${PROMOTION_THRESHOLD} separate edits`);
+    const template = document.createElement("template");
+    template.innerHTML = indexHtml;
+    const list = template.content.querySelector("#vocab-terms-list")!;
+    expect(list.closest('[data-expert-only="true"]')).toBeNull();
+    const pending = template.content.querySelector("#vocab-observing-list")!;
+    expect(pending.closest('[data-expert-only="true"]')).not.toBeNull();
   });
 });

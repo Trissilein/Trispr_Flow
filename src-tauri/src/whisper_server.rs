@@ -482,48 +482,11 @@ pub fn transcribe_via_server(
     wav_bytes: &[u8],
     port: u16,
     language: &str,
+    prompt: Option<&str>,
 ) -> Result<String, String> {
     let _request_guard = WhisperServerRequestGuard::new();
     let boundary = "trispr_boundary_8f3a2b";
-    let mut body: Vec<u8> = Vec::new();
-
-    // Add WAV file part
-    write_multipart_field_file(
-        &mut body,
-        boundary,
-        "file",
-        "audio.wav",
-        "audio/wav",
-        wav_bytes,
-    )
-    .map_err(|e| format!("Failed to encode multipart: {}", e))?;
-
-    // Add response-format part
-    write_multipart_field_text(&mut body, boundary, "response_format", "json")
-        .map_err(|e| format!("Failed to encode multipart: {}", e))?;
-
-    // Add language part
-    write_multipart_field_text(&mut body, boundary, "language", language)
-        .map_err(|e| format!("Failed to encode multipart: {}", e))?;
-
-    // Dictation only needs final text, not token timestamps. Keep decoding
-    // deterministic and avoid fallback candidate loops for lower latency on
-    // short push-to-talk clips.
-    for (name, value) in [
-        ("no_timestamps", "true"),
-        ("temperature", "0.0"),
-        ("temperature_inc", "0.0"),
-        ("best_of", "1"),
-        ("suppress_nst", "true"),
-        ("no_language_probabilities", "true"),
-    ] {
-        write_multipart_field_text(&mut body, boundary, name, value)
-            .map_err(|e| format!("Failed to encode multipart: {}", e))?;
-    }
-
-    // Close boundary
-    write!(body, "--{}--\r\n", boundary)
-        .map_err(|e| format!("Failed to close multipart: {}", e))?;
+    let body = build_inference_body(wav_bytes, language, prompt, boundary)?;
 
     let content_type = format!("multipart/form-data; boundary={}", boundary);
 
@@ -594,6 +557,62 @@ pub fn transcribe_via_server(
                 json
             )
         })
+}
+
+/// Multipart body for `POST /inference`. `prompt` (whisper.cpp server field `prompt`) is the
+/// vocabulary hint, the same text the CLI path passes as `--prompt`; omitted when absent/blank.
+fn build_inference_body(
+    wav_bytes: &[u8],
+    language: &str,
+    prompt: Option<&str>,
+    boundary: &str,
+) -> Result<Vec<u8>, String> {
+    let mut body: Vec<u8> = Vec::new();
+
+    // Add WAV file part
+    write_multipart_field_file(
+        &mut body,
+        boundary,
+        "file",
+        "audio.wav",
+        "audio/wav",
+        wav_bytes,
+    )
+    .map_err(|e| format!("Failed to encode multipart: {}", e))?;
+
+    // Add response-format part
+    write_multipart_field_text(&mut body, boundary, "response_format", "json")
+        .map_err(|e| format!("Failed to encode multipart: {}", e))?;
+
+    // Add language part
+    write_multipart_field_text(&mut body, boundary, "language", language)
+        .map_err(|e| format!("Failed to encode multipart: {}", e))?;
+
+    // Vocabulary hint (proper nouns / project terms) biases the decoder like `--prompt` does.
+    if let Some(prompt) = prompt.map(str::trim).filter(|p| !p.is_empty()) {
+        write_multipart_field_text(&mut body, boundary, "prompt", prompt)
+            .map_err(|e| format!("Failed to encode multipart: {}", e))?;
+    }
+
+    // Dictation only needs final text, not token timestamps. Keep decoding
+    // deterministic and avoid fallback candidate loops for lower latency on
+    // short push-to-talk clips.
+    for (name, value) in [
+        ("no_timestamps", "true"),
+        ("temperature", "0.0"),
+        ("temperature_inc", "0.0"),
+        ("best_of", "1"),
+        ("suppress_nst", "true"),
+        ("no_language_probabilities", "true"),
+    ] {
+        write_multipart_field_text(&mut body, boundary, name, value)
+            .map_err(|e| format!("Failed to encode multipart: {}", e))?;
+    }
+
+    // Close boundary
+    write!(body, "--{}--\r\n", boundary)
+        .map_err(|e| format!("Failed to close multipart: {}", e))?;
+    Ok(body)
 }
 
 /// Restart the Whisper-Server if it's running.
@@ -835,8 +854,52 @@ fn optimal_thread_count() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::strict_backend_from_preference;
+    use super::{build_inference_body, strict_backend_from_preference};
     use crate::state::Settings;
+
+    fn body_text(prompt: Option<&str>) -> String {
+        let body = build_inference_body(b"RIFF", "de", prompt, "BND").expect("body");
+        String::from_utf8_lossy(&body).to_string()
+    }
+
+    #[test]
+    fn inference_body_carries_the_vocabulary_prompt_as_its_own_field() {
+        let text = body_text(Some("Beta, Trispr"));
+        assert!(text
+            .contains("Content-Disposition: form-data; name=\"prompt\"\r\n\r\nBeta, Trispr\r\n"));
+        assert!(text.contains("name=\"language\"\r\n\r\nde\r\n"));
+        assert!(text.ends_with("--BND--\r\n"));
+    }
+
+    /// Live check against a running whisper-server:
+    /// `TRISPR_LIVE_WHISPER_PORT=<port> TRISPR_LIVE_WAV=<16 kHz wav> cargo test --lib
+    /// live_server_accepts_and_uses_the_prompt_field -- --ignored`
+    #[test]
+    #[ignore = "needs a running whisper-server (TRISPR_LIVE_WHISPER_PORT) and a wav (TRISPR_LIVE_WAV)"]
+    fn live_server_accepts_and_uses_the_prompt_field() {
+        let port: u16 = std::env::var("TRISPR_LIVE_WHISPER_PORT")
+            .expect("TRISPR_LIVE_WHISPER_PORT")
+            .parse()
+            .expect("port");
+        let wav =
+            std::fs::read(std::env::var("TRISPR_LIVE_WAV").expect("TRISPR_LIVE_WAV")).expect("wav");
+        let without = super::transcribe_via_server(&wav, port, "en", None).expect("no prompt");
+        let with = super::transcribe_via_server(
+            &wav,
+            port,
+            "en",
+            Some("And so, my fellow Amerikans, ask not what your Kuntry can do for you."),
+        )
+        .expect("with prompt");
+        println!("without prompt: {without}\nwith prompt:    {with}");
+        assert_ne!(without, with, "the server must act on the prompt field");
+    }
+
+    #[test]
+    fn inference_body_omits_the_prompt_field_without_terms() {
+        assert!(!body_text(None).contains("name=\"prompt\""));
+        assert!(!body_text(Some("  ")).contains("name=\"prompt\""));
+    }
 
     #[test]
     fn strict_backend_preference_only_for_explicit_gpu_backends() {

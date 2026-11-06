@@ -1314,6 +1314,35 @@
                 </details>
               </div>
 
+              <!-- Learned Vocabulary (list visible in standard mode; pending details are expert-only) -->
+              <div class="ai-refine-section">
+                <details class="expander ai-refine-expander">
+                  <summary>
+                    <h3 class="ai-refine-section-title">Learned Vocabulary</h3>
+                  </summary>
+                  <div class="expander-body">
+                    <div class="vocab-terms-block">
+                      <div class="vocab-terms-header">
+                        <span class="field-label">Learned</span>
+                        <span class="vocab-terms-count" id="vocab-terms-count"></span>
+                      </div>
+                      <div class="vocab-terms-hint">
+                        Words the app learns by watching what you correct. When you fix the same word in 2 separate edits of pasted text (before hitting Enter), it is remembered: Whisper gets it as a hint, the refinement model sees "heard → intended", and close misspellings are also replaced automatically. Click × to remove anything wrong. It then stops being used.
+                      </div>
+
+                      <div class="vocab-subsection">
+                        <div id="vocab-terms-list" class="vocab-terms-list" role="list" aria-label="Learned vocabulary"></div>
+                      </div>
+
+                      <div class="vocab-subsection" data-expert-only="true">
+                        <span class="vocab-subsection-label">Pending corrections<span class="vocab-subsection-hint"> — seen once; they move up to Learned after 2 separate edits and expire after 90 days</span></span>
+                        <div id="vocab-observing-list" class="vocab-terms-list vocab-observing" role="list" aria-label="Pending correction pairs"></div>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+
               <!-- Custom Vocabulary -->
               <div class="ai-refine-section" data-expert-only="true">
                 <details class="expander ai-refine-expander">
@@ -1325,7 +1354,7 @@
                       <label class="field toggle span-2" data-expert-only="true">
                         <span class="toggle-row">
                           <span class="field-label">Enable</span>
-                          <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript" />
+                          <input id="postproc-custom-vocab-enabled" type="checkbox" title="Apply custom find-and-replace rules to every transcript and send corrections to the refinement model" />
                           <span class="toggle-track"><span class="toggle-thumb"></span></span>
                         </span>
                       </label>
@@ -1334,25 +1363,6 @@
                           <div id="postproc-vocab-rows"></div>
                         </div>
                         <button id="postproc-vocab-add" class="btn-ghost btn-small vocab-add-btn" data-expert-only="true">+ Add</button>
-                      </div>
-                      <div class="vocab-terms-block span-2">
-                        <div class="vocab-terms-header">
-                          <span class="field-label">Learned Vocabulary</span>
-                          <span class="vocab-terms-count" id="vocab-terms-count"></span>
-                        </div>
-                        <div class="vocab-terms-hint">
-                          Terms the app learns by watching what you correct. When you edit the pasted text before hitting Enter, it notices — and after 3 repetitions, the correction becomes automatic. Click × to remove anything wrong.
-                        </div>
-
-                        <div class="vocab-subsection">
-                          <span class="vocab-subsection-label">Learned</span>
-                          <div id="vocab-terms-list" class="vocab-terms-list" role="list" aria-label="Learned vocabulary terms"></div>
-                        </div>
-
-                        <div class="vocab-subsection">
-                          <span class="vocab-subsection-label">Pending corrections<span class="vocab-subsection-hint"> — edits seen so far; they move up to Learned after 3 repetitions</span></span>
-                          <div id="vocab-observing-list" class="vocab-terms-list vocab-observing" role="list" aria-label="Pending correction pairs"></div>
-                        </div>
                       </div>
                     </div>
                   </div>

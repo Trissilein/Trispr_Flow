@@ -9,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   renderLearnedVocabChips: vi.fn(),
+  showToast: vi.fn(),
 }));
+
+vi.mock("../toast", () => ({ showToast: mocks.showToast }));
 
 vi.mock("../settings/vocabulary.settings", () => ({
   renderLearnedVocabChips: mocks.renderLearnedVocabChips,
@@ -45,6 +48,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
 beforeEach(() => {
   setSettings(makeSettings());
   mocks.renderLearnedVocabChips.mockReset();
+  mocks.showToast.mockReset();
 });
 
 afterEach(() => {
@@ -109,25 +113,36 @@ describe("wordDiff", () => {
 // ---------------------------------------------------------------------------
 
 describe("runMigrationIfNeeded", () => {
-  it("clears postproc_custom_vocab on first run", () => {
+  it("keeps hand-written rules: sets the marker, deletes nothing", () => {
     setSettings(makeSettings({
       edit_delta_migrated: false,
-      postproc_custom_vocab: { Trispa: "Trispr", bad: "entry" },
+      postproc_custom_vocab: { Trispa: "Trispr", api: "API" },
     }));
     runMigrationIfNeeded();
-    expect(settings!.postproc_custom_vocab).toEqual({});
-  });
-
-  it("resets edit_substitutions to empty array on first run", () => {
-    setSettings(makeSettings({ edit_delta_migrated: false }));
-    runMigrationIfNeeded();
-    expect(settings!.edit_substitutions).toEqual([]);
-  });
-
-  it("sets edit_delta_migrated=true after running", () => {
-    setSettings(makeSettings({ edit_delta_migrated: false }));
-    runMigrationIfNeeded();
+    expect(settings!.postproc_custom_vocab).toEqual({ Trispa: "Trispr", api: "API" });
     expect(settings!.edit_delta_migrated).toBe(true);
+  });
+
+  it("keeps pending pairs and vocab_terms", () => {
+    const pending = { from: "Trispa", to: "Trispr", count: 1, first_seen_ms: 1, last_seen_ms: 2 };
+    setSettings(makeSettings({
+      edit_delta_migrated: false,
+      edit_substitutions: [pending],
+      vocab_terms: ["GPT", "MemPalace"],
+    }));
+    runMigrationIfNeeded();
+    expect(settings!.edit_substitutions).toEqual([pending]);
+    expect(settings!.vocab_terms).toEqual(["GPT", "MemPalace"]);
+  });
+
+  it("the first edit of a fresh profile does not wipe hand-written rules", () => {
+    setSettings(makeSettings({
+      edit_delta_migrated: false,
+      postproc_custom_vocab: { teh: "the" },
+    }));
+    ingestEditDelta("Ich Trispa.", "Ich Trispr.");
+    expect(settings!.postproc_custom_vocab).toEqual({ teh: "the" });
+    expect(settings!.edit_substitutions).toHaveLength(1);
   });
 
   it("does NOT run again if already migrated", () => {
@@ -137,15 +152,6 @@ describe("runMigrationIfNeeded", () => {
     }));
     runMigrationIfNeeded();
     expect(settings!.postproc_custom_vocab).toEqual({ keep: "me" });
-  });
-
-  it("does NOT touch vocab_terms during migration", () => {
-    setSettings(makeSettings({
-      edit_delta_migrated: false,
-      vocab_terms: ["GPT", "MemPalace"],
-    }));
-    runMigrationIfNeeded();
-    expect(settings!.vocab_terms).toEqual(["GPT", "MemPalace"]);
   });
 });
 
@@ -169,10 +175,13 @@ describe("ingestEditDelta — accumulation", () => {
     expect(settings!.vocab_terms).not.toContain("Trispr");
   });
 
-  it("second sighting promotes: removes from pending, adds to postproc_custom_vocab", () => {
+  it("second sighting promotes: no longer pending, kept as learned pair, rule added", () => {
     ingestEditDelta("Ich Trispa.", "Ich Trispr.");
     ingestEditDelta("Der Trispa ist.", "Der Trispr ist.");
-    expect(settings!.edit_substitutions ?? []).toHaveLength(0);
+    const subs = settings!.edit_substitutions ?? [];
+    expect(subs.filter((s) => !s.promoted)).toHaveLength(0);
+    expect(subs).toHaveLength(1);
+    expect(subs[0]).toMatchObject({ from: "Trispa", to: "Trispr", count: 2, promoted: true });
     expect(settings!.postproc_custom_vocab["Trispa"]).toBe("Trispr");
   });
 
@@ -180,7 +189,7 @@ describe("ingestEditDelta — accumulation", () => {
     ingestEditDelta("Ich gamma sage.", "Ich gemma sage.");
     ingestEditDelta("Der Gamma ist.", "Der Gemma ist.");
     // Two casing variants of the same pair → merged counter → promoted
-    expect(settings!.edit_substitutions ?? []).toHaveLength(0);
+    expect((settings!.edit_substitutions ?? []).filter((s) => !s.promoted)).toHaveLength(0);
     expect(settings!.postproc_custom_vocab["Gamma"]).toBe("Gemma");
   });
 
@@ -198,12 +207,19 @@ describe("ingestEditDelta — accumulation", () => {
     await vi.waitFor(() => expect(mocks.renderLearnedVocabChips).toHaveBeenCalled());
   });
 
-  it("promotion with mixed-case 'from' adds both original and lowercase postproc entries", () => {
+  it("CamelCase 'from' also gets a lowercase twin rule", () => {
     for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
-      ingestEditDelta("Der Trispa war.", "Der Trispr war.");
+      ingestEditDelta("Der MemPalaze war.", "Der MemPalace war.");
     }
-    expect(settings!.postproc_custom_vocab["Trispa"]).toBe("Trispr");
-    expect(settings!.postproc_custom_vocab["trispa"]).toBe("Trispr");
+    expect(settings!.postproc_custom_vocab["MemPalaze"]).toBe("MemPalace");
+    expect(settings!.postproc_custom_vocab["mempalaze"]).toBe("MemPalace");
+  });
+
+  it("plain capitalized 'from' gets NO lowercase twin (Code could be a common word)", () => {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      ingestEditDelta("Der Code war.", "Der Codex war.");
+    }
+    expect(settings!.postproc_custom_vocab).toEqual({ Code: "Codex" });
   });
 
   it("all-lowercase 'from' does NOT create duplicate lowercase entry", () => {

@@ -27,10 +27,12 @@ export interface EditSubstitution {
   from: string;
   /** What the user typed instead. */
   to: string;
-  /** Number of times this correction has been observed. */
+  /** Number of separate edits in which this correction has been observed. */
   count: number;
   first_seen_ms: number;
   last_seen_ms: number;
+  /** True once the correction reached the threshold and is in use; absent/false = pending. */
+  promoted?: boolean;
 }
 
 export interface AIFallbackSettings {
@@ -140,18 +142,15 @@ export interface Settings {
   postproc_custom_vocab_enabled: boolean;
   postproc_custom_vocab: Record<string, string>;
   /**
-   * Auto-learned proper nouns, acronyms, and project-specific terms.
-   * Populated by the auto-learning heuristic as the user dictates — no
-   * manual entry required. Injected as whisper-cli `--prompt` and forwarded
-   * to the LLM refinement prompt as terms to preserve verbatim.
+   * Learned proper nouns, acronyms, and project-specific terms (targets of
+   * corrections the user repeated). Sent as Whisper initial prompt (CLI and
+   * server) and to the LLM refinement prompt.
    */
   vocab_terms: string[];
-  /** Substitution pairs observed from user edits, accumulating toward auto-promotion. */
+  /** Pairs observed from user edits: pending ones count toward promotion, promoted ones stay for ranking. */
   edit_substitutions?: EditSubstitution[];
-  /** Set to true after the one-time migration that clears legacy heuristic data. */
+  /** Marker for the one-time edit-delta migration (sets the flag only, deletes nothing). */
   edit_delta_migrated?: boolean;
-  /** Unix-ms timestamp of the last successful LLM vocab cleanup run. */
-  last_vocab_cleanup_ms?: number;
   postproc_llm_enabled: boolean;
   postproc_llm_model: string;
   postproc_llm_prompt: string;

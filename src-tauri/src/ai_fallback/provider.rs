@@ -416,7 +416,8 @@ pub fn prompt_for_profile(
                 preserve_source_language,
             ));
         }
-        // Custom prompts are user-owned and must remain unchanged.
+        // Custom prompts are user-owned and returned unchanged here. `prepare_refinement` still
+        // appends the learned-vocabulary hint afterwards (the prompt itself stays the prefix).
         return Some(normalized.to_string());
     }
 

@@ -136,47 +136,20 @@ pub(crate) struct RefinementSetup {
     pub options: RefinementOptions,
 }
 
-/// Append a "preserve these terms verbatim" clause to the refinement system
-/// prompt. This prevents the LLM from mangling user-specific proper nouns
-/// and acronyms during refinement (e.g. "MemPalace" -> "Mem Palace",
-/// "XPBar" -> "xp bar"). Returns None if neither the base prompt nor the
-/// terms list produce usable content.
-fn augment_prompt_with_vocab_terms(base: Option<String>, terms: &[String]) -> Option<String> {
-    let mut cleaned: Vec<&str> = terms
-        .iter()
-        .map(|term| term.trim())
-        .filter(|term| !term.is_empty())
-        .collect();
-    if cleaned.is_empty() {
+/// Append the learned vocabulary (known corrections "heard -> intended" and terms to keep
+/// verbatim, see `vocab_hints::refinement_suffix`) to the refinement system prompt. This stops the
+/// LLM from mangling user-specific proper nouns ("MemPalace" -> "Mem Palace") and lets it repeat
+/// corrections the user made before. Also appended to a user-owned custom prompt, which stays
+/// the unchanged prefix. Returns `base` untouched when nothing is learned.
+fn augment_prompt_with_vocab(base: Option<String>, settings: &Settings) -> Option<String> {
+    let Some(suffix) = crate::vocab_hints::refinement_suffix(settings) else {
         return base;
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    cleaned.retain(|term| seen.insert(term.to_lowercase()));
-
-    const MAX_TERMS_CHARS: usize = 600;
-    let mut joined = String::new();
-    for term in cleaned {
-        let delim = if joined.is_empty() { "" } else { ", " };
-        if joined.len() + delim.len() + term.len() > MAX_TERMS_CHARS {
-            break;
-        }
-        joined.push_str(delim);
-        joined.push_str(term);
-    }
-    if joined.is_empty() {
-        return base;
-    }
-
-    let suffix = format!(
-        "\n\nKnown terms (proper nouns, acronyms, product names) — preserve these exactly as written, do not translate or normalize them: {}",
-        joined
-    );
+    };
     match base {
         Some(base_prompt) if !base_prompt.trim().is_empty() => {
-            Some(format!("{}{}", base_prompt, suffix))
+            Some(format!("{}\n\n{}", base_prompt, suffix))
         }
-        _ => Some(suffix.trim_start().to_string()),
+        _ => Some(suffix),
     }
 }
 
@@ -253,14 +226,14 @@ pub(crate) fn prepare_refinement(
         max_tokens: ai.max_tokens,
         low_latency_mode: low_latency_decision.enabled,
         language: Some(effective_language.clone()),
-        custom_prompt: augment_prompt_with_vocab_terms(
+        custom_prompt: augment_prompt_with_vocab(
             provider::prompt_for_profile(
                 &ai.prompt_profile,
                 &effective_language,
                 Some(ai.custom_prompt.as_str()),
                 ai.preserve_source_language,
             ),
-            &settings.vocab_terms,
+            settings,
         ),
         enforce_language_guard,
         prompt_profile: ai.prompt_profile.clone(),
@@ -446,5 +419,57 @@ mod language_guard_tests {
     fn llm_prompt_profile_is_exempt_with_either_preserve_setting() {
         assert!(!should_enforce_language_guard(true, "llm_prompt"));
         assert!(!should_enforce_language_guard(false, "llm_prompt"));
+    }
+}
+
+#[cfg(test)]
+mod vocab_prompt_tests {
+    use super::augment_prompt_with_vocab;
+    use crate::state::{EditSubstitution, Settings};
+
+    fn learned_settings() -> Settings {
+        let mut settings = Settings::default();
+        settings.vocab_terms = vec!["Trispr".to_string(), "Ollama".to_string()];
+        settings.postproc_custom_vocab_enabled = true;
+        settings.edit_substitutions = vec![EditSubstitution {
+            from: "Trispa".to_string(),
+            to: "Trispr".to_string(),
+            count: 2,
+            first_seen_ms: 1,
+            last_seen_ms: 2,
+            promoted: true,
+        }];
+        settings
+    }
+
+    #[test]
+    fn nothing_learned_leaves_the_prompt_untouched() {
+        let settings = Settings::default();
+        assert_eq!(augment_prompt_with_vocab(None, &settings), None);
+        assert_eq!(
+            augment_prompt_with_vocab(Some("Base.".to_string()), &settings).as_deref(),
+            Some("Base.")
+        );
+    }
+
+    #[test]
+    fn custom_prompt_stays_the_unchanged_prefix_and_gets_the_vocab_appended() {
+        // prompt_for_profile returns a user-owned custom prompt unchanged; the vocabulary hint
+        // is appended afterwards (provider.rs documents this split).
+        let custom = "Rewrite as a pirate.";
+        let prompt = augment_prompt_with_vocab(Some(custom.to_string()), &learned_settings())
+            .expect("prompt");
+        assert!(prompt.starts_with(&format!(
+            "{custom}\n\nKnown corrections (heard -> intended)"
+        )));
+        assert!(prompt.contains("Trispa -> Trispr."));
+        assert!(prompt.ends_with("normalize them: Ollama"));
+    }
+
+    #[test]
+    fn empty_base_prompt_yields_the_suffix_alone() {
+        let prompt =
+            augment_prompt_with_vocab(Some("  ".to_string()), &learned_settings()).expect("prompt");
+        assert!(prompt.starts_with("Known corrections (heard -> intended)"));
     }
 }

@@ -1334,7 +1334,8 @@ fn handle_transcription_ok(
             }
         }
     } else {
-        text.to_string()
+        // Learned/custom find-replace rules do not depend on the rule-based stages.
+        crate::postprocessing::apply_custom_vocab_rules(text, settings)
     };
 
     let job_id = next_transcription_job_id(source);

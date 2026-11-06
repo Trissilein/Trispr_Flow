@@ -96,8 +96,7 @@ import { initExpertMode } from "./expert-mode";
 import { initOnboardingWizard, reopenSpeechEngineSetup } from "./onboarding-wizard";
 import { isRuntimeMissingMessage } from "./onboarding-wizard-logic";
 import { initPipelineStatus } from "./pipeline-status";
-import { ingestEditDelta } from "./vocab-auto-learn";
-import { scheduleVocabCleanupIfNeeded } from "./vocab-cleanup";
+import { ingestEditDelta, pruneStalePending } from "./vocab-auto-learn";
 import {
   handleRefinementFailureForInspector,
   handleRefinementStartedForInspector,
@@ -639,8 +638,8 @@ async function bootstrap() {
           unlistenHealth();
         })();
       }
-      // Give OLLAMA time to load a model before the cleanup check runs
-      setTimeout(scheduleVocabCleanupIfNeeded, 15_000);
+      // Expire stale pending vocabulary corrections (off the startup critical path)
+      setTimeout(() => void pruneStalePending(), 15_000);
     } catch (bgError) {
       console.error("Non-fatal background init error:", bgError);
       traceFrontendError("bootstrap.background", "background init failed", {

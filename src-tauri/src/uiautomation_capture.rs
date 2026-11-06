@@ -316,7 +316,7 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         "enter_capture:edit_detected",
         EditPayload {
             pasted,
-            submitted: current_text,
+            submitted: cap_submitted(current_text),
             same_target: true,
             pattern_used: pattern_used.to_string(),
         },
@@ -325,9 +325,21 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
     }
 }
 
+/// Upper bound (chars) for the text read from the focused element. A whole-document dump from an
+/// editor can be huge and unrelated to the pasted dictation; the learner only needs the edited
+/// region, so anything beyond this is not sent to the frontend.
+const MAX_SUBMITTED_CHARS: usize = 20_000;
+
+fn cap_submitted(text: String) -> String {
+    match text.char_indices().nth(MAX_SUBMITTED_CHARS) {
+        Some((byte_idx, _)) => text[..byte_idx].to_string(),
+        None => text,
+    }
+}
+
 /// Read the user-visible text of the focused element. Returns the text plus a
 /// label identifying which UIA pattern produced it — useful for diagnostics
-/// and for downstream confidence weighting.
+/// and for downstream confidence weighting. Password fields are never read.
 ///
 /// Strategy hierarchy:
 /// 1. **ValuePattern** — plain inputs (Slack/Teams chat fields, browser inputs).
@@ -339,6 +351,14 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
 #[cfg(target_os = "windows")]
 unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<(String, &'static str)> {
     let element = automation.GetFocusedElement().ok()?;
+
+    if element
+        .CurrentIsPassword()
+        .map(|is_password| is_password.as_bool())
+        .unwrap_or(false)
+    {
+        return None;
+    }
 
     if let Ok(raw) = element.GetCurrentPattern(UIA_ValuePatternId) {
         if let Ok(vp) = raw.cast::<IUIAutomationValuePattern>() {
@@ -410,5 +430,20 @@ mod tests {
         assert!(!is_repaste_gesture(WM_MBUTTONUP_CODE, false, true));
         assert!(!is_repaste_gesture(WM_MBUTTONUP_CODE, false, false));
         assert!(!is_repaste_gesture(WM_KEYUP_CODE, true, true));
+    }
+
+    #[test]
+    fn submitted_text_is_capped_on_a_char_boundary() {
+        let short = "kurz".to_string();
+        assert_eq!(cap_submitted(short.clone()), short);
+
+        // multi-byte chars: the cut must never split a UTF-8 sequence
+        let long = "ä".repeat(MAX_SUBMITTED_CHARS + 500);
+        let capped = cap_submitted(long);
+        assert_eq!(capped.chars().count(), MAX_SUBMITTED_CHARS);
+        assert!(capped.chars().all(|c| c == 'ä'));
+
+        let exact = "x".repeat(MAX_SUBMITTED_CHARS);
+        assert_eq!(cap_submitted(exact.clone()), exact);
     }
 }

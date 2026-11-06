@@ -11,17 +11,22 @@
 
 import * as dom from "../dom-refs";
 import { settings } from "../state";
-import { dismissLearnedTerm, PROMOTION_THRESHOLD } from "../vocab-auto-learn";
+import {
+    dismissLearnedPair,
+    dismissLearnedTerm,
+    dismissPendingSubstitution,
+    PROMOTION_THRESHOLD,
+} from "../vocab-auto-learn";
 import { persistSettings } from "../settings-persist";
 
 // Custom vocabulary panel
 
 /**
- * Render both the learned-vocabulary chip list and the observing-candidates
- * list. Learned chips that originated from a multi-variant cluster expose an
- * expand affordance revealing the individual variant spellings (each with its
- * own × to split it off). Observing chips show progress toward the promotion
- * threshold.
+ * Render both the learned-vocabulary chip list and the pending-corrections
+ * list. Learned corrections show as "heard → intended" chips, terms without a
+ * recorded correction as plain chips; every chip has a × that removes the term
+ * together with the rules built from it. Pending chips show progress toward
+ * the promotion threshold and have a × as well.
  */
 export function renderLearnedVocabChips(): void {
     renderLearnedVocabChipsInternal();
@@ -31,19 +36,23 @@ export function renderLearnedVocabChips(): void {
 function renderLearnedVocabChipsInternal(): void {
     const container = dom.vocabTermsList;
     if (!container) return;
-    const terms = Array.isArray(settings?.vocab_terms) ? [...settings!.vocab_terms] : [];
-    terms.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    const subs = Array.isArray(settings?.edit_substitutions) ? settings!.edit_substitutions : [];
+    const pairs = subs.filter((s) => s.promoted).sort((a, b) => b.last_seen_ms - a.last_seen_ms);
+    const pairTargets = new Set(pairs.map((p) => p.to.toLowerCase()));
+    const terms = (Array.isArray(settings?.vocab_terms) ? [...settings!.vocab_terms] : [])
+        .filter((t) => !pairTargets.has(t.toLowerCase()))
+        .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-    const pending = Array.isArray(settings?.edit_substitutions)
-        ? settings!.edit_substitutions.length
-        : 0;
+    const pending = subs.filter((s) => !s.promoted).length;
 
-    updateVocabCountBadge(terms.length, pending);
+    updateVocabCountBadge(pairs.length + terms.length, pending);
     container.innerHTML = "";
 
+    for (const pair of pairs) {
+        container.appendChild(buildLearnedPairChip(pair));
+    }
     for (const term of terms) {
-        const chip = buildLearnedChip(term);
-        container.appendChild(chip);
+        container.appendChild(buildLearnedChip(term));
     }
 }
 
@@ -51,7 +60,7 @@ function renderObservingCandidateChips(): void {
     const container = dom.vocabObservingList;
     if (!container) return;
     const subs = Array.isArray(settings?.edit_substitutions)
-        ? [...settings!.edit_substitutions]
+        ? settings!.edit_substitutions.filter((s) => !s.promoted)
         : [];
     // Newest-first so recently-corrected pairs surface at the top.
     subs.sort((a, b) => b.last_seen_ms - a.last_seen_ms);
@@ -74,33 +83,58 @@ function updateVocabCountBadge(learned: number, observed: number): void {
     dom.vocabTermsCount.textContent = parts.join(" · ");
 }
 
-function buildLearnedChip(term: string): DocumentFragment {
-    const frag = document.createDocumentFragment();
-
+function buildChip(
+    labelText: string,
+    title: string,
+    dismissTitle: string,
+    onDismiss: () => Promise<void>,
+    extraClass = "",
+): HTMLSpanElement {
     const chip = document.createElement("span");
-    chip.className = "vocab-term-chip";
-    chip.dataset.term = term;
+    chip.className = `vocab-term-chip${extraClass ? ` ${extraClass}` : ""}`;
     chip.setAttribute("role", "listitem");
+    chip.setAttribute("title", title);
 
     const label = document.createElement("span");
-    label.textContent = term;
+    label.textContent = labelText;
     chip.appendChild(label);
 
     const dismiss = document.createElement("button");
     dismiss.type = "button";
     dismiss.className = "vocab-term-chip-dismiss";
-    dismiss.title = "Remove this term";
-    dismiss.setAttribute("aria-label", `Remove learned term ${term}`);
+    dismiss.title = dismissTitle;
+    dismiss.setAttribute("aria-label", `${dismissTitle}: ${labelText}`);
     dismiss.textContent = "×";
     dismiss.addEventListener("click", async (ev) => {
         ev.stopPropagation();
-        await dismissLearnedTerm(term);
+        await onDismiss();
         renderLearnedVocabChips();
     });
     chip.appendChild(dismiss);
-    frag.appendChild(chip);
 
-    return frag;
+    return chip;
+}
+
+function buildLearnedChip(term: string): HTMLSpanElement {
+    const chip = buildChip(
+        term,
+        "Learned term — sent to Whisper and the refinement model",
+        "Remove this term and the rules built from it",
+        () => dismissLearnedTerm(term),
+    );
+    chip.dataset.term = term;
+    return chip;
+}
+
+function buildLearnedPairChip(sub: { from: string; to: string; count: number }): HTMLSpanElement {
+    const chip = buildChip(
+        `${sub.from} → ${sub.to}`,
+        `Learned from ${sub.count} corrections — heard "${sub.from}", meant "${sub.to}"`,
+        "Remove this correction and its rules",
+        () => dismissLearnedPair(sub.from, sub.to),
+    );
+    chip.dataset.term = sub.to;
+    return chip;
 }
 
 function buildPendingSubstitutionChip(sub: {
@@ -108,19 +142,18 @@ function buildPendingSubstitutionChip(sub: {
     to: string;
     count: number;
 }): HTMLSpanElement {
-    const chip = document.createElement("span");
-    chip.className = "vocab-term-chip observing";
-    chip.setAttribute("role", "listitem");
-    chip.setAttribute("title", `Corrected ${sub.count}× — will auto-learn after ${PROMOTION_THRESHOLD} corrections`);
-
-    const label = document.createElement("span");
-    label.textContent = `${sub.from} → ${sub.to}`;
-    chip.appendChild(label);
+    const chip = buildChip(
+        `${sub.from} → ${sub.to}`,
+        `Corrected ${sub.count}× — learned after ${PROMOTION_THRESHOLD} separate corrections`,
+        "Discard this pending correction",
+        () => dismissPendingSubstitution(sub.from, sub.to),
+        "observing",
+    );
 
     const progress = document.createElement("span");
     progress.className = "vocab-chip-progress";
     progress.textContent = `×${sub.count}/${PROMOTION_THRESHOLD}`;
-    chip.appendChild(progress);
+    chip.insertBefore(progress, chip.querySelector(".vocab-term-chip-dismiss"));
 
     return chip;
 }

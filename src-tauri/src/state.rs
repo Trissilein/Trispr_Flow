@@ -319,24 +319,18 @@ pub(crate) struct Settings {
     pub(crate) postproc_numbers_enabled: bool,
     pub(crate) postproc_custom_vocab_enabled: bool,
     pub(crate) postproc_custom_vocab: HashMap<String, String>,
-    /// Auto-learned proper nouns, acronyms, and project-specific terms.
-    /// Populated silently by the frontend as the user dictates — CamelCase
-    /// and acronym-shaped tokens are promoted on first sight; plain-nouns
-    /// after a repeat-threshold. Injected as whisper-cli `--prompt` so the
-    /// transcription comes out correctly on the first pass; also forwarded to
-    /// the LLM refinement prompt so the refiner preserves them verbatim.
+    /// Learned proper nouns, acronyms, and project-specific terms (targets of corrections the
+    /// user repeated). Sent as Whisper initial prompt (CLI `--prompt` and server `prompt` field)
+    /// and to the LLM refinement prompt (see `vocab_hints`).
     #[serde(default)]
     pub(crate) vocab_terms: Vec<String>,
-    /// Substitution pairs observed from user edits, accumulating toward auto-promotion.
+    /// Substitution pairs observed from user edits: pending ones accumulate toward promotion,
+    /// promoted ones stay (with count/recency) so the hints can be ranked.
     #[serde(default)]
     pub(crate) edit_substitutions: Vec<EditSubstitution>,
-    /// Set to true after the one-time migration that clears legacy heuristic data.
+    /// Marker for the one-time edit-delta migration (sets the flag only, deletes nothing).
     #[serde(default)]
     pub(crate) edit_delta_migrated: bool,
-    /// Unix-ms timestamp of the last successful LLM vocab cleanup run (0 = never); drives the
-    /// frontend's 4-day throttle, so it must round-trip through `settings.json`.
-    #[serde(default)]
-    pub(crate) last_vocab_cleanup_ms: u64,
     pub(crate) postproc_llm_enabled: bool,
     pub(crate) postproc_llm_model: String,
     pub(crate) postproc_llm_prompt: String,
@@ -444,7 +438,6 @@ impl Default for Settings {
       vocab_terms: Vec::new(),
       edit_substitutions: Vec::new(),
       edit_delta_migrated: false,
-      last_vocab_cleanup_ms: 0,
       postproc_llm_enabled: false,
       postproc_llm_model: String::new(),
       postproc_llm_prompt: "Refine this voice transcription: fix punctuation, capitalization, and obvious errors. Keep the original meaning. Output only the refined text.".to_string(),
@@ -482,10 +475,14 @@ pub(crate) struct EditSubstitution {
     pub(crate) from: String,
     /// What the user typed instead.
     pub(crate) to: String,
-    /// Number of times this correction has been observed.
+    /// Number of separate edits in which this correction has been observed.
     pub(crate) count: u32,
     pub(crate) first_seen_ms: u64,
     pub(crate) last_seen_ms: u64,
+    /// True once the correction reached the threshold and is in use (Whisper/LLM hints,
+    /// optionally a find-replace rule). Missing in older settings files = still pending.
+    #[serde(default)]
+    pub(crate) promoted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1425,20 +1422,21 @@ mod tests {
     }
 
     #[test]
-    fn last_vocab_cleanup_ms_round_trips_so_the_four_day_throttle_holds() {
-        assert_eq!(Settings::default().last_vocab_cleanup_ms, 0);
-
-        // Old settings.json without the field: serde default 0 (= never cleaned up).
-        let legacy: Settings = serde_json::from_str("{}").expect("legacy settings");
-        assert_eq!(legacy.last_vocab_cleanup_ms, 0);
-
-        // The frontend writes it via save_settings; it must survive a serialize/deserialize cycle.
-        let mut settings = Settings::default();
-        settings.last_vocab_cleanup_ms = 1_762_000_000_000;
-        let json = serde_json::to_string(&settings).expect("serialize settings");
-        assert!(json.contains("\"last_vocab_cleanup_ms\":1762000000000"));
-        let reloaded: Settings = serde_json::from_str(&json).expect("reload settings");
-        assert_eq!(reloaded.last_vocab_cleanup_ms, 1_762_000_000_000);
+    fn legacy_vocab_cleanup_field_and_pending_pairs_without_promoted_flag_still_load() {
+        // The LLM vocab cleanup job (and its throttle field) was removed; old files still carry it.
+        let settings: Settings = serde_json::from_str(
+            r#"{ "last_vocab_cleanup_ms": 1762000000000,
+                 "edit_delta_migrated": true,
+                 "edit_substitutions": [
+                   { "from": "Trispa", "to": "Trispr", "count": 1,
+                     "first_seen_ms": 1, "last_seen_ms": 2 } ] }"#,
+        )
+        .expect("legacy vocab settings must still deserialize");
+        assert_eq!(settings.edit_substitutions.len(), 1);
+        assert!(!settings.edit_substitutions[0].promoted);
+        let rewritten = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(!rewritten.contains("last_vocab_cleanup_ms"));
+        assert!(rewritten.contains("\"promoted\":false"));
     }
 
     #[test]

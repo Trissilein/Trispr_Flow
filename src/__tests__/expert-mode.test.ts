@@ -252,6 +252,7 @@ describe("Block K K5 — Expert Mode Toggle", () => {
       "pipeline-node-output-raw",
       "prompt-preset-list",
       "ai-fallback-custom-prompt",
+      "vocab-terms-list",
     ].forEach(expectStandardControl);
 
     [
@@ -265,6 +266,8 @@ describe("Block K K5 — Expert Mode Toggle", () => {
       "diagnostic-logging-toggle",
       "postproc-punctuation",
       "ai-fallback-local-advanced",
+      "vocab-observing-list",
+      "postproc-vocab-rows",
     ].forEach(expectExpertControl);
   });
 });

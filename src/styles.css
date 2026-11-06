@@ -5530,7 +5530,7 @@ input[type="range"]:focus-visible {
 }
 
 .vocab-terms-list:empty::before {
-  content: "Nothing learned yet — dictate a few transcripts and terms will appear here automatically.";
+  content: "Nothing learned yet — correct the same misheard word in two separate edits and it appears here.";
   color: var(--muted);
   font-size: 11px;
   font-style: italic;

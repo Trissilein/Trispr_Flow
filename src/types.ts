@@ -194,6 +194,8 @@ export interface HistoryEntry {
   source: string;
   speaker_name?: string | null;
   refinement?: HistoryRefinement | null;
+  /** Why the dictation was pasted raw without (completed) refinement; see refinement-reasons.ts. */
+  refinement_skip_reason?: string | null;
 }
 
 export interface HistoryRefinement {
@@ -634,6 +636,15 @@ export interface RuntimeDiagnostics {
   ollama: OllamaRuntimeDiagnostics;
   whisper: WhisperRuntimeDiagnostics;
   frontend_watchdog?: FrontendWatchdogDiagnostics;
+}
+
+/** Backend event `refinement:health`: one episode = `recovering`, then `recovered` or `failed`. */
+export interface RefinementHealthEvent {
+  state: "recovering" | "recovered" | "failed";
+  reason: string;
+  message?: string;
+  attempt: number;
+  ts_ms: number;
 }
 
 export interface OverlayHealthEvent {

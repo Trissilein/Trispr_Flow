@@ -2069,6 +2069,16 @@ button:disabled {
   flex-shrink: 0;
 }
 
+/* Reason text can be long: shrink and ellipsize; the full reason is in the tooltip. */
+.refinement-chip.has-reason {
+  display: block;
+  min-width: 0;
+  max-width: 70%;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 button.refinement-chip {
   appearance: none;
   cursor: pointer;

@@ -23,10 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Custom vocabulary rules apply in one pass**: longest match wins, result independent of rule order, the replacement is inserted literally (`$1` stays `$1`), a replacement is never matched by another rule. They now also work with Post-processing switched off (only "Custom Vocabulary: Enable" is needed).
 - The first edit on a profile no longer deletes hand-written custom vocabulary rules (the old one-time "migration" cleared them); at most 50 pending corrections, 100 learned corrections and 200 terms are kept.
 - Privacy: the Enter-capture ignores password fields and sends at most 20,000 characters of the edited field to the learner.
+- **Refinement status is visible**: the backend event `refinement:health` turns the Refine status light yellow while the model is reloaded and shows one toast per step ("Refinement paused: <reason>. Reloading…", then "Refinement restored", or "Refinement unavailable" with dictation continuing as raw text; repeated events never stack toasts). The history chip "Raw only" now names the reason when the backend recorded one ("Raw — model was not loaded", GPU busy, refinement timed out, …), and the pipeline graph and inspector show the same readable reason texts (central helper `src/refinement-reasons.ts`). Removed the dead `ai_fallback:health_degraded` listener (nothing emitted it).
 
 ### Removed
 
 - The LLM-based vocabulary cleanup job (`vocab-cleanup.ts`): in the packaged app its request to Ollama was blocked (origin `tauri.localhost`), so it never ran. The old `last_vocab_cleanup_ms` setting is ignored.
+
+### Fixed
+
+- **Refinement heals itself when Ollama drops the model**: when Ollama evicted the model on its own (server keep-alive, restart, another client, "Purge GPU memory"), the cached "warm" flag stayed true, so the PTT pre-warm was skipped and every following dictation was pasted raw until the one-hour idle release. Now a dictation that finds the model gone corrects the flag (the Refine light turns grey) and reloads the model in the background; the paste is never delayed. A failed `/api/ps` query is logged and reported as `ps_query_failed` instead of silently counting as "not loaded". Three refinement failures within 10 minutes start a recovery ladder (force warm-up, then verify/start the runtime, then restart our own managed Ollama, at most once per 10 minutes; an external Ollama is never restarted), announced once per episode as `refinement:health`. The history entry records why a dictation was raw (`refinement_skip_reason`), "Purge GPU memory" greys the light, and every dictation writes one `[refinement:ID] outcome=… reason=…` line to the log even with diagnostic logging off.
 
 ## [0.10.0] - 2026-11-05
 

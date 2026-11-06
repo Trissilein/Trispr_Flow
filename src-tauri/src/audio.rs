@@ -8,8 +8,9 @@ use crate::overlay::{
 use crate::postprocessing::process_transcript;
 use crate::refinement_adaptation::{record_refinement_observation, RefinementObservation};
 use crate::state::{
-    mark_entry_refinement_failed, mark_entry_refinement_started, mark_entry_refinement_success,
-    normalize_ai_fallback_fields, push_history_entry_inner, save_settings_file, AppState, Settings,
+    mark_entry_refinement_failed, mark_entry_refinement_skipped, mark_entry_refinement_started,
+    mark_entry_refinement_success, normalize_ai_fallback_fields, push_history_entry_inner,
+    save_settings_file, AppState, Settings,
 };
 use crate::transcription::{
     rms_i16, should_drop_transcript, transcribe_audio, RefinementGateDecision, TranscriptionResult,
@@ -1375,19 +1376,29 @@ fn handle_transcription_ok(
     // A CPU-loaded Ollama model is still loaded and available even when
     // /api/ps reports size_vram=0. VRAM remains GPU/offload telemetry only.
     //
-    // On bypass the PTT eager-warmup (handle_ptt_press) is already loading the
-    // model in the background, so the *next* dictation will refine.
+    // On bypass the model is reloaded in the background (the PTT pre-warm, or the
+    // reconcile below, which also corrects the cached warm flag), so the *next*
+    // dictation will refine. A failed /api/ps query counts as "not loaded" but
+    // is reported as such, never swallowed.
     let refinement_enabled = ai_refinement_capability_enabled(settings);
+    let warm_flag = state.ollama_model_warm.load(Ordering::SeqCst);
     // The provider is always "ollama" (normalized on load and save).
-    let (model_loaded, ollama_vram_bytes) =
-        crate::ai_fallback::provider::fetch_ollama_model_load_status(
-            &settings.providers.ollama.endpoint,
-            &settings.ai_fallback.model,
-        )
-        .map(|status| (status.loaded, status.size_vram))
-        .unwrap_or((false, 0));
-    let gpu_busy = state.gpu_busy.load(std::sync::atomic::Ordering::Relaxed);
-    let should_refine = refinement_enabled && model_loaded && !gpu_busy;
+    let gate = crate::refinement_health::evaluate_gate(
+        refinement_enabled,
+        state.gpu_busy.load(Ordering::Relaxed),
+        || {
+            crate::ai_fallback::provider::fetch_ollama_model_load_status(
+                &settings.providers.ollama.endpoint,
+                &settings.ai_fallback.model,
+            )
+        },
+    );
+    let (model_loaded, ollama_vram_bytes, gpu_busy, should_refine) = (
+        gate.loaded,
+        gate.vram_bytes,
+        gate.gpu_busy,
+        gate.should_refine,
+    );
     let ollama_cold = refinement_enabled && !model_loaded;
 
     // Cold start inverts the deferral: paste raw immediately and let the
@@ -1397,16 +1408,28 @@ fn handle_transcription_ok(
     let paste_deferred = should_refine
         && !paste_timeout_cold
         && should_defer_paste_for_refinement(&app_handle, settings);
-    let skipped_reason = if should_refine {
-        None
-    } else if !refinement_enabled {
-        Some("disabled".to_string())
-    } else if gpu_busy {
-        Some("gpu_busy".to_string())
-    } else {
-        // refinement enabled but not should_refine: GPU is not busy, so the model is not loaded.
-        Some("ollama_model_not_loaded".to_string())
-    };
+    let skipped_reason = gate.skip_reason.map(str::to_string);
+    // Why this dictation is pasted raw (history chip); a cold start still runs a
+    // background refinement, but the user got raw text first.
+    let raw_reason = gate.skip_reason.or((should_refine && paste_timeout_cold)
+        .then_some(crate::refinement_health::reason::COLD_START_RAW_FIRST));
+    info!(
+        "[refinement:{}] outcome={} reason={} ps_ok={} loaded={} warm_flag={} gpu_busy={} cold_start={}",
+        job_id,
+        if paste_deferred {
+            "refine_inline"
+        } else if should_refine {
+            "refine_background"
+        } else {
+            "raw"
+        },
+        raw_reason.unwrap_or("none"),
+        gate.ps_ok,
+        gate.loaded,
+        warm_flag,
+        gate.gpu_busy,
+        paste_timeout_cold
+    );
     let _ = app_handle.emit(
         "transcription:result",
         TranscriptionResult {
@@ -1465,6 +1488,7 @@ fn handle_transcription_ok(
             app_handle.clone(),
             job_id.clone(),
             paste_timeout_ms,
+            entry_id.clone(),
         );
     } else {
         state.paste_arbiter.settle(
@@ -1473,6 +1497,13 @@ fn handle_transcription_ok(
             crate::paste_arbiter::PasteOutcome::Raw,
             None,
         );
+    }
+    // After the paste, so none of this can delay it.
+    if let (Some(reason), Some(entry_id_value)) = (raw_reason, entry_id.as_deref()) {
+        let _ = mark_entry_refinement_skipped(app_handle, entry_id_value, reason);
+    }
+    if gate.reconcile {
+        crate::refinement_health::on_model_missing(app_handle, &gate);
     }
     // Only spawn refinement when the model is loaded. On bypass we
     // skip it entirely: the user already has the raw paste, and spawning now
@@ -1679,7 +1710,7 @@ pub(crate) fn maybe_spawn_ai_refinement(
     job_id: String,
     entry_id: Option<String>,
     settings: &Settings,
-    _defer_announced: bool,
+    defer_announced: bool,
 ) {
     if !ai_refinement_capability_enabled(settings) {
         return;
@@ -1721,12 +1752,19 @@ pub(crate) fn maybe_spawn_ai_refinement(
             provider,
             settings.ai_fallback.model
         );
-        app_handle.state::<AppState>().paste_arbiter.settle(
+        let settled = app_handle.state::<AppState>().paste_arbiter.settle(
             &app_handle,
             &job_id,
             crate::paste_arbiter::PasteOutcome::RawFallback,
             None,
         );
+        if let (true, Some(entry_id_value)) = (settled, entry_id.as_deref()) {
+            let _ = mark_entry_refinement_skipped(
+                &app_handle,
+                entry_id_value,
+                crate::refinement_health::reason::QUEUE_FULL,
+            );
+        }
         let _ = app_handle.emit(
             "transcription:refinement-failed",
             serde_json::json!({
@@ -1776,11 +1814,18 @@ pub(crate) fn maybe_spawn_ai_refinement(
                 } else {
                     "prepare_failed"
                 };
-                app_handle.state::<AppState>().paste_arbiter.settle(
+                let settled = app_handle.state::<AppState>().paste_arbiter.settle(
                     &app_handle,
                     &job_id,
                     crate::paste_arbiter::PasteOutcome::RawFallback,
                     None,
+                );
+                record_refinement_job_failure(
+                    &app_handle,
+                    entry_id.as_deref(),
+                    crate::refinement_health::reason::PREPARE_FAILED,
+                    settled,
+                    defer_announced,
                 );
                 if let Some(entry_id_value) = entry_id.as_deref() {
                     let _ = mark_entry_refinement_failed(
@@ -1823,11 +1868,18 @@ pub(crate) fn maybe_spawn_ai_refinement(
                         } else {
                             "prepare_failed"
                         };
-                        app_handle.state::<AppState>().paste_arbiter.settle(
+                        let settled = app_handle.state::<AppState>().paste_arbiter.settle(
                             &app_handle,
                             &job_id,
                             crate::paste_arbiter::PasteOutcome::RawFallback,
                             None,
+                        );
+                        record_refinement_job_failure(
+                            &app_handle,
+                            entry_id.as_deref(),
+                            crate::refinement_health::reason::PREPARE_FAILED,
+                            settled,
+                            defer_announced,
                         );
                         if let Some(entry_id_value) = entry_id.as_deref() {
                             let _ = mark_entry_refinement_failed(
@@ -1968,10 +2020,15 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             result.usage.output_tokens
                         );
                     }
-                    crate::state::record_refinement_success(
+                    if let Some(episode) = crate::state::record_refinement_success(
                         app_handle.state::<AppState>().inner(),
                         &result.model,
-                    );
+                    ) {
+                        crate::refinement_health::announce_recovered_after_success(
+                            &app_handle,
+                            episode,
+                        );
+                    }
                     if let Some(tier_update) = &result.tier_update {
                         crate::ai_fallback::persist_tier_update(
                             &app_handle,
@@ -2071,11 +2128,18 @@ pub(crate) fn maybe_spawn_ai_refinement(
                             RefinementObservation::Failure
                         },
                     );
-                    app_handle.state::<AppState>().paste_arbiter.settle(
+                    let settled = app_handle.state::<AppState>().paste_arbiter.settle(
                         &app_handle,
                         &job_id,
                         crate::paste_arbiter::PasteOutcome::RawFallback,
                         None,
+                    );
+                    record_refinement_job_failure(
+                        &app_handle,
+                        entry_id.as_deref(),
+                        crate::refinement_health::reason::PROVIDER_ERROR,
+                        settled,
+                        defer_announced,
                     );
                     if let Some(entry_id_value) = entry_id.as_deref() {
                         let _ = mark_entry_refinement_failed(
@@ -2119,6 +2183,25 @@ pub(crate) fn maybe_spawn_ai_refinement(
             );
         }
     });
+}
+
+/// A refinement job failed. When its failure pasted the raw text, that is the reason shown in
+/// the history; otherwise an earlier raw paste (cold start, deadline) already explains it. The
+/// failure counts toward the self-heal, except when the deadline of a deferred job already
+/// counted this dictation as `raw_timeout`.
+fn record_refinement_job_failure(
+    app_handle: &AppHandle,
+    entry_id: Option<&str>,
+    failure_reason: &'static str,
+    settled_by_failure: bool,
+    defer_announced: bool,
+) {
+    if let (true, Some(entry_id_value)) = (settled_by_failure, entry_id) {
+        let _ = mark_entry_refinement_skipped(app_handle, entry_id_value, failure_reason);
+    }
+    if settled_by_failure || !defer_announced {
+        crate::refinement_health::note_failure(app_handle, failure_reason);
+    }
 }
 
 fn is_ollama_model_not_found_message(message: &str) -> bool {
@@ -2274,6 +2357,72 @@ pub(crate) fn mark_ollama_model_cold(app_handle: &AppHandle) {
         .ollama_warmup_in_progress
         .store(false, Ordering::SeqCst);
     crate::overlay::update_overlay_ollama_state(app_handle, crate::overlay::OllamaModelState::Cold);
+}
+
+/// Loads the configured refinement model into Ollama (blocking) and keeps the warm flag and the
+/// overlay in step with the result. Settings are read fresh from the state on every call.
+pub(crate) fn run_ollama_warmup(app_handle: &AppHandle, trigger: &str) -> Result<(), String> {
+    let state = app_handle.state::<AppState>();
+    let (endpoint, model, num_ctx) = {
+        let settings = state
+            .settings
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        (
+            settings.providers.ollama.endpoint.clone(),
+            settings.ai_fallback.model.clone(),
+            crate::ai_fallback::provider::num_ctx_for_tier(
+                settings.ai_fallback.adaptive_num_ctx_tier,
+            ),
+        )
+    };
+    state
+        .ollama_warmup_in_progress
+        .store(true, Ordering::SeqCst);
+    crate::overlay::update_overlay_ollama_state(
+        app_handle,
+        crate::overlay::OllamaModelState::Loading,
+    );
+    let result = crate::warmup_ollama_model_impl(&endpoint, &model, num_ctx);
+    state
+        .ollama_warmup_in_progress
+        .store(false, Ordering::SeqCst);
+    match &result {
+        Ok(()) => {
+            info!("[ollama.warmup] {} warm-up done model={}", trigger, model);
+            state.ollama_model_warm.store(true, Ordering::SeqCst);
+            // Loaded is not enough for a red bar: the paste policy pastes
+            // raw until a refinement has succeeded recently, so stay grey.
+            set_overlay_for_loaded_model(app_handle);
+        }
+        Err(error) => {
+            warn!(
+                "[ollama.warmup] {} warm-up failed (non-fatal): {}",
+                trigger, error
+            );
+            crate::overlay::update_overlay_ollama_state(
+                app_handle,
+                crate::overlay::OllamaModelState::Cold,
+            );
+        }
+    }
+    result
+}
+
+/// `run_ollama_warmup` on its own thread (PTT press, gate reconcile). Does nothing while another
+/// warm-up is already running.
+pub(crate) fn spawn_ollama_warmup(app_handle: &AppHandle, trigger: &'static str) {
+    if app_handle
+        .state::<AppState>()
+        .ollama_warmup_in_progress
+        .swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+    let app = app_handle.clone();
+    crate::util::spawn_guarded("ollama_warmup", move || {
+        let _ = run_ollama_warmup(&app, trigger);
+    });
 }
 
 const OLLAMA_IDLE_RELEASE_MS: u64 = 3_600_000; // 1 hour — model stays loaded between dictations, VRAM is freed after an idle hour
@@ -3294,39 +3443,7 @@ pub(crate) fn handle_ptt_press(app: &AppHandle) -> Result<(), String> {
     let already_warm = state.ollama_model_warm.load(Ordering::SeqCst);
     let warmup_running = state.ollama_warmup_in_progress.load(Ordering::SeqCst);
     if ai_refinement_capability_enabled(&settings) && !already_warm && !warmup_running {
-        let endpoint = settings.providers.ollama.endpoint.clone();
-        let model = settings.ai_fallback.model.clone();
-        let num_ctx = crate::ai_fallback::provider::num_ctx_for_tier(
-            settings.ai_fallback.adaptive_num_ctx_tier,
-        );
-        let app_for_warmup = app.clone();
-        let app_state = app.state::<AppState>();
-        app_state
-            .ollama_warmup_in_progress
-            .store(true, Ordering::SeqCst);
-        crate::overlay::update_overlay_ollama_state(app, crate::overlay::OllamaModelState::Loading);
-        crate::util::spawn_guarded("ollama_ptt_warmup", move || {
-            match crate::warmup_ollama_model_impl(&endpoint, &model, num_ctx) {
-                Ok(()) => {
-                    tracing::info!("[ollama.warmup] ptt pre-warm done model={}", model);
-                    let s = app_for_warmup.state::<AppState>();
-                    s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
-                    s.ollama_model_warm.store(true, Ordering::SeqCst);
-                    // Loaded is not enough for a red bar: the paste policy pastes
-                    // raw until a refinement has succeeded recently, so stay grey.
-                    set_overlay_for_loaded_model(&app_for_warmup);
-                }
-                Err(e) => {
-                    tracing::warn!("[ollama.warmup] ptt pre-warm failed (non-fatal): {}", e);
-                    let s = app_for_warmup.state::<AppState>();
-                    s.ollama_warmup_in_progress.store(false, Ordering::SeqCst);
-                    crate::overlay::update_overlay_ollama_state(
-                        &app_for_warmup,
-                        crate::overlay::OllamaModelState::Cold,
-                    );
-                }
-            }
-        });
+        spawn_ollama_warmup(app, "ptt");
     }
 
     if settings.ptt_use_vad {

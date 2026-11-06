@@ -1270,7 +1270,7 @@ impl OllamaProvider {
         // Keep the model loaded indefinitely between requests by default so the
         // next hotkey press never has to wait for a cold reload. Operators can
         // override with TRISPR_OLLAMA_KEEP_ALIVE (e.g. "30m" for a shorter window).
-        // Trispr Flow's own idle-release (4 h) is the primary unload mechanism.
+        // Trispr Flow's own idle-release (1 h) is the primary unload mechanism.
         let keep_alive_raw = std::env::var("TRISPR_OLLAMA_KEEP_ALIVE")
             .ok()
             .filter(|value| !value.trim().is_empty())

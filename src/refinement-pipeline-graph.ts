@@ -7,6 +7,7 @@ import type {
 import { settings, startupStatus } from "./state";
 import { getOllamaRuntimeCardState } from "./ollama-models";
 import * as dom from "./dom-refs";
+import { describeRefinementReason, isModelUnavailableReason } from "./refinement-reasons";
 
 type NodeState = "idle" | "active" | "success" | "bypassed" | "blocked" | "error" | "timeout" | "warming";
 type EdgeState = "idle" | "active" | "muted";
@@ -24,7 +25,6 @@ type PipelineJobState = {
 };
 
 const PIPELINE_TERMINAL_RESET_MS = 2200;
-const SKIPPED_MODEL_NOT_LOADED = "ollama_model_not_loaded";
 
 /** Error text (e.g. warm-up 404 "Model 'x' not found in Ollama") that says the model is not installed. */
 function isModelNotInstalledError(error: string): boolean {
@@ -170,11 +170,17 @@ function updateLiveSummary(
   const jobToken = formatJobToken(pipelineJobState.jobId);
   switch (pipelineJobState.phase) {
     case "raw_emitted":
-      dom.refinementPipelineLive.textContent = localAiPath && pipelineJobState.deferred
-        ? `Job ${jobToken}: raw transcript ready, waiting for AI refinement${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`
-        : pipelineJobState.skippedReason === SKIPPED_MODEL_NOT_LOADED
-          ? `Job ${jobToken}: model not loaded — raw pasted.`
-          : `Job ${jobToken}: raw/rule output path selected.`;
+      {
+        // "disabled" keeps the neutral text: rules may still apply on the raw path.
+        const skipLabel = pipelineJobState.skippedReason === "disabled"
+          ? undefined
+          : describeRefinementReason(pipelineJobState.skippedReason)?.label;
+        dom.refinementPipelineLive.textContent = localAiPath && pipelineJobState.deferred
+          ? `Job ${jobToken}: raw transcript ready, waiting for AI refinement${pipelineJobState.model ? ` (${pipelineJobState.model})` : ""}.`
+          : skipLabel
+            ? `Job ${jobToken}: ${skipLabel} — raw pasted.`
+            : `Job ${jobToken}: raw/rule output path selected.`;
+      }
       break;
     case "refining":
       dom.refinementPipelineLive.textContent =
@@ -236,15 +242,16 @@ export function renderRefinementPipelineGraph(): void {
         ? "active"
         : "success";
 
+  const modelUnavailable = isModelUnavailableReason(pipelineJobState.skippedReason);
   const modelNotLoaded = hasJob
-    && pipelineJobState.skippedReason === SKIPPED_MODEL_NOT_LOADED
+    && modelUnavailable
     && pipelineJobState.phase === "raw_emitted";
   // Gate skipped refinement (model not loaded): raw was pasted right away. The background
   // warm-up may move the phase on to "refining", raw stays the pasted output until then.
   const rawPastedModelNotLoaded = hasJob
     && gateEnabled
     && !pipelineJobState.deferred
-    && pipelineJobState.skippedReason === SKIPPED_MODEL_NOT_LOADED
+    && modelUnavailable
     && (pipelineJobState.phase === "raw_emitted" || pipelineJobState.phase === "refining");
 
   let aiState: NodeState = "idle";

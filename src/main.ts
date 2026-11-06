@@ -89,6 +89,7 @@ import { initMainTab } from "./wiring/app-chrome.wire";
 import { scheduleSettingsRender } from "./wiring/wire-helpers";
 import { initUnifiedTooltips, cleanupUnifiedTooltips } from "./custom-tooltips";
 import { dismissToast, showToast, showErrorToast } from "./toast";
+import { listenRefinementHealth, resetRefinementHealth } from "./refinement-health";
 import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { initExportDialog } from "./export-dialog";
@@ -380,6 +381,7 @@ function cleanupEventListeners() {
   eventUnlisteners = [];
   dismissToast(overlayHealthToastId);
   overlayHealthToastId = null;
+  resetRefinementHealth();
 }
 
 function initConversationView() {
@@ -714,12 +716,8 @@ async function bootstrap() {
         duration: 12_000,
       });
     }),
-    // Re-check Ollama health when a timeout or connection error occurs during
-    // refinement — avoids requiring a full app restart to recover the status.
-    listen("ai_fallback:health_degraded", async () => {
-      await refreshOllamaRuntimeState({ force: true });
-      renderAIFallbackSettingsUi();
-    }),
+    // Model dropped out of memory: backend heals it, we show status light + one toast per step.
+    listenRefinementHealth(),
     listen<TranscriptionResultEvent>("transcription:result", (event) => {
       const payload = event.payload;
       handlePipelineTranscriptionResult(payload);

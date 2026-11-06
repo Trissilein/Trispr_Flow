@@ -109,8 +109,14 @@ impl PasteArbiter {
 
 /// Spawn the deadline that guarantees a paste even if the refinement worker
 /// hangs past every soft timeout. Lives in Rust so window visibility and
-/// WebView timer throttling cannot delay it.
-pub(crate) fn schedule_deadline(app_handle: AppHandle, job_id: String, timeout_ms: u64) {
+/// WebView timer throttling cannot delay it. A deadline that wins the race pasted raw because
+/// refinement was too slow: the history entry says so and the self-heal counts it.
+pub(crate) fn schedule_deadline(
+    app_handle: AppHandle,
+    job_id: String,
+    timeout_ms: u64,
+    entry_id: Option<String>,
+) {
     crate::util::spawn_guarded("paste_arbiter_deadline", move || {
         thread::sleep(Duration::from_millis(timeout_ms));
         let state = app_handle.state::<AppState>();
@@ -120,6 +126,12 @@ pub(crate) fn schedule_deadline(app_handle: AppHandle, job_id: String, timeout_m
                 .settle(&app_handle, &job_id, PasteOutcome::RawTimeout, None);
         if timed_out {
             warn!("[paste_arbiter:{job_id}] deadline hit after {timeout_ms}ms — raw pasted");
+            let raw_timeout = crate::refinement_health::reason::RAW_TIMEOUT;
+            if let Some(entry_id) = entry_id.as_deref() {
+                let _ =
+                    crate::state::mark_entry_refinement_skipped(&app_handle, entry_id, raw_timeout);
+            }
+            crate::refinement_health::note_failure(&app_handle, raw_timeout);
         }
     });
 }

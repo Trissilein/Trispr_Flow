@@ -8,6 +8,7 @@ import * as dom from "./dom-refs";
 import { formatTime } from "./ui-helpers";
 import { updateRangeAria } from "./accessibility";
 import { showToast } from "./toast";
+import { describeRefinementReason } from "./refinement-reasons";
 import { getHistoryFontSize } from "./history-preferences";
 import {
   buildRefinementWordDiff,
@@ -724,22 +725,32 @@ function getRefinementChipClass(state: RefinementChipState): string {
   return "is-raw";
 }
 
-function buildRefinementChip(entry: HistoryEntry): HTMLElement {
+export function buildRefinementChip(entry: HistoryEntry): HTMLElement {
   const state = getRefinementChipState(entry);
   const hasSnapshot = Boolean(getRefinementSnapshot(entry.id) || entry.refinement);
   const chipTag = hasSnapshot ? "button" : "span";
   const chip = document.createElement(chipTag);
   chip.className = `refinement-chip ${getRefinementChipClass(state)}`;
-  chip.textContent = getRefinementChipLabel(state);
+  // Backend reason for pasting raw (absent on older entries -> unchanged chip).
+  const reason = describeRefinementReason(entry.refinement_skip_reason);
+  if (state === "raw_only" && reason) {
+    chip.textContent = `Raw — ${reason.past}`;
+    chip.classList.add("has-reason");
+  } else {
+    chip.textContent = getRefinementChipLabel(state);
+  }
   chip.setAttribute("aria-label", `Refinement status: ${chip.textContent}`);
 
+  const reasonNote = reason ? `Pasted raw: ${reason.past}.` : "";
   if (hasSnapshot && chip instanceof HTMLButtonElement) {
     chip.type = "button";
-    chip.title = "Open refinement inspector for this entry";
+    chip.title = [reasonNote, "Open refinement inspector for this entry"].filter(Boolean).join(" ");
     chip.addEventListener("click", (event) => {
       event.stopPropagation();
       setInspectorFocus(entry.id);
     });
+  } else if (reasonNote) {
+    chip.title = reasonNote;
   }
 
   return chip;

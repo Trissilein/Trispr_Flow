@@ -124,6 +124,34 @@ describe("refinement pipeline graph: model not loaded", () => {
     expect(nodeState("pipeline-node-ai")).toBe("error");
   });
 
+  it("treats the unified model_not_loaded code like the legacy gate code", () => {
+    emitRaw("job-unified", "model_not_loaded");
+
+    expect(nodeState("pipeline-node-output-raw")).toBe("active");
+    expect(nodeState("pipeline-node-ai")).toBe("warming");
+    expect(mocks.live.textContent).toBe("Job job-unified: model not loaded — raw pasted.");
+  });
+
+  it("names the reason when the Ollama status query failed", () => {
+    emitRaw("job-ps", "ps_query_failed");
+
+    expect(mocks.live.textContent).toContain("Ollama status unavailable — raw pasted.");
+    expect(nodeState("pipeline-node-ai")).toBe("warming");
+  });
+
+  it("names other skip reasons readably without marking the model as warming", () => {
+    emitRaw("job-busy", "gpu_busy");
+
+    expect(mocks.live.textContent).toContain("GPU busy — raw pasted.");
+    expect(nodeState("pipeline-node-ai")).not.toBe("warming");
+  });
+
+  it("keeps the neutral text when refinement is simply off", () => {
+    emitRaw("job-off", "disabled");
+
+    expect(mocks.live.textContent).toContain("raw/rule output path selected");
+  });
+
   it("keeps the generic failure text for other errors", () => {
     emitRaw("job-500", "ollama_model_not_loaded");
     handlePipelineRefinementFailed({

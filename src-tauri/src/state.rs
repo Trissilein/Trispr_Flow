@@ -521,6 +521,10 @@ pub(crate) struct HistoryEntry {
     pub(crate) speaker_name: Option<String>,
     #[serde(default)]
     pub(crate) refinement: Option<HistoryRefinement>,
+    /// Why this dictation was pasted raw without (or before) a refinement result; one of the
+    /// reason codes in `refinement_health::reason`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) refinement_skip_reason: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -684,6 +688,8 @@ pub(crate) struct AppState {
     pub(crate) refinement_last_change_ms: AtomicU64,
     pub(crate) refinement_last_success_ms: AtomicU64,
     pub(crate) refinement_last_success_model: Mutex<Option<String>>,
+    /// Failure streak and recovery episode of the refinement self-heal (`refinement_health.rs`).
+    pub(crate) refinement_health: Mutex<crate::refinement_health::RefinementHealth>,
     pub(crate) ollama_idle_release_generation: AtomicU64,
     /// Single owner of every job's paste outcome (see `paste_arbiter.rs`).
     pub(crate) paste_arbiter: crate::paste_arbiter::PasteArbiter,
@@ -721,20 +727,32 @@ pub(crate) struct AppState {
     pub(crate) managed_process_job: Option<ManagedProcessJob>,
 }
 
-pub(crate) fn record_refinement_success(state: &AppState, model: &str) {
+/// Returns `(reason, attempts)` of a self-heal episode that was still open, so the caller can
+/// announce it as recovered.
+pub(crate) fn record_refinement_success(
+    state: &AppState,
+    model: &str,
+) -> Option<(&'static str, u32)> {
     state
         .refinement_last_success_ms
         .store(crate::util::now_ms(), std::sync::atomic::Ordering::Relaxed);
-    let mut last_model = state
-        .refinement_last_success_model
+    {
+        let mut last_model = state
+            .refinement_last_success_model
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let trimmed = model.trim();
+        *last_model = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    let mut health = state
+        .refinement_health
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let trimmed = model.trim();
-    *last_model = if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    };
+    crate::refinement_health::on_success(&mut health)
 }
 
 /// Only "minimized" is a real start state; unknown values and the legacy "tray" become "normal".
@@ -1234,6 +1252,7 @@ pub(crate) fn push_history_entry_inner(
         source,
         speaker_name,
         refinement: None,
+        refinement_skip_reason: None,
     };
     ph.push_entry(entry);
     let updated: Vec<HistoryEntry> = ph.active.iter().cloned().collect();
@@ -1326,6 +1345,17 @@ fn ensure_history_refinement(entry: &mut HistoryEntry) -> &mut HistoryRefinement
         .refinement
         .as_mut()
         .expect("refinement just initialized")
+}
+
+/// Remember why a dictation was pasted raw (see `HistoryEntry::refinement_skip_reason`).
+pub(crate) fn mark_entry_refinement_skipped(
+    app: &AppHandle,
+    entry_id: &str,
+    skip_reason: &str,
+) -> Result<(), String> {
+    update_history_entry_refinement(app, entry_id, |entry| {
+        entry.refinement_skip_reason = Some(skip_reason.to_string());
+    })
 }
 
 pub(crate) fn mark_entry_refinement_started(
@@ -1789,6 +1819,7 @@ mod tests {
                 execution_time_ms: Some(1234),
                 error: error.to_string(),
             }),
+            refinement_skip_reason: None,
         }
     }
 
@@ -1831,5 +1862,31 @@ mod tests {
             restored[2].refinement.as_ref().map(|r| r.status.as_str()),
             Some("refining")
         );
+    }
+
+    #[test]
+    fn skip_reason_is_persisted_only_when_set_and_old_entries_still_load() {
+        let mut entry = sample_history_entry("a", "idle", "", "");
+        let plain = serde_json::to_value(&entry).expect("serialize entry");
+        assert!(
+            plain.get("refinement_skip_reason").is_none(),
+            "an entry without a reason must stay byte-compatible with older builds"
+        );
+
+        entry.refinement_skip_reason = Some("model_not_loaded".to_string());
+        let with_reason = serde_json::to_value(&entry).expect("serialize entry");
+        assert_eq!(with_reason["refinement_skip_reason"], "model_not_loaded");
+        let restored: HistoryEntry = serde_json::from_value(with_reason).expect("reload entry");
+        assert_eq!(
+            restored.refinement_skip_reason.as_deref(),
+            Some("model_not_loaded")
+        );
+
+        // history written before the field existed
+        let old: HistoryEntry = serde_json::from_str(
+            r#"{ "id": "h_1", "text": "hi", "timestamp_ms": 1, "source": "local" }"#,
+        )
+        .expect("old history entry must still load");
+        assert_eq!(old.refinement_skip_reason, None);
     }
 }

@@ -1,6 +1,7 @@
 import { escapeHtml } from "./utils";
 import { isRefinementEnabled } from "./state";
 import * as dom from "./dom-refs";
+import { describeRefinementReason } from "./refinement-reasons";
 import type {
   HistoryEntry,
   TranscriptionRefinedEvent,
@@ -356,7 +357,7 @@ function renderLatestInspector(): void {
     typeof snapshot.executionTimeMs === "number" ? ` • ${snapshot.executionTimeMs} ms` : "";
   const gate = snapshot.gate;
   const gatePart = gate
-    ? ` • gate: ${gate.should_refine ? "refine" : gate.skipped_reason || "skip"}${gate.paste_deferred ? ", deferred" : ""}${typeof gate.ollama_model_loaded === "boolean" ? `, loaded=${gate.ollama_model_loaded}` : ""}${typeof gate.ollama_vram_bytes === "number" ? `, vram=${gate.ollama_vram_bytes}` : ""}`
+    ? ` • gate: ${gate.should_refine ? "refine" : describeRefinementReason(gate.skipped_reason)?.label ?? "skip"}${gate.paste_deferred ? ", deferred" : ""}${typeof gate.ollama_model_loaded === "boolean" ? `, loaded=${gate.ollama_model_loaded}` : ""}${typeof gate.ollama_vram_bytes === "number" ? `, vram=${gate.ollama_vram_bytes}` : ""}`
     : "";
   dom.refinementInspectorMeta.textContent = `${sourceLabel}${modelPart}${timePart}${gatePart}`;
 

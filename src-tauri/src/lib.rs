@@ -17,6 +17,7 @@ mod paste_arbiter;
 mod paths;
 mod postprocessing;
 mod refinement_adaptation;
+mod refinement_health;
 mod runtime_commands;
 mod state;
 mod transcription;
@@ -2540,6 +2541,7 @@ pub fn run() {
                 refinement_last_change_ms: AtomicU64::new(0),
                 refinement_last_success_ms: AtomicU64::new(0),
                 refinement_last_success_model: Mutex::new(None),
+                refinement_health: Mutex::new(crate::refinement_health::RefinementHealth::default()),
                 ollama_idle_release_generation: AtomicU64::new(0),
                 paste_arbiter: crate::paste_arbiter::PasteArbiter::default(),
                 managed_ollama_child: Mutex::new(None),

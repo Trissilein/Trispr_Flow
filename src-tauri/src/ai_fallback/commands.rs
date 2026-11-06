@@ -465,7 +465,7 @@ pub(crate) fn warmup_ollama_model_impl(
 }
 
 #[tauri::command]
-pub(crate) fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) fn purge_gpu_memory(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let settings = state
         .settings
         .read()
@@ -486,6 +486,8 @@ pub(crate) fn purge_gpu_memory(state: State<'_, AppState>) -> Result<(), String>
     state
         .whisper_server_warmup_started
         .store(false, Ordering::Relaxed);
+    // The model is gone now, whatever the cached flag said: grey light, next PTT press warms it.
+    crate::audio::mark_ollama_model_cold(&app);
 
     Ok(())
 }

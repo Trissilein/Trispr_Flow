@@ -13,14 +13,17 @@ import {
   describeRecommendation,
   formatMegabytes,
   planAfterSelfTest,
+  toRuntimeError,
   variantStatus,
   type RuntimeRecommendation,
+  type RuntimeSetupError,
   type RuntimeVariant,
   type RuntimeVerifyResult,
   type WhisperRuntimeProgress,
   type WhisperRuntimeStatus,
   type WizardStepId,
 } from "./onboarding-wizard-logic";
+import { bindTroubleshootPanel, hideTroubleshoot, showTroubleshoot } from "./onboarding-wizard-troubleshoot";
 
 const VARIANT_LABEL: Record<RuntimeVariant, string> = { cuda: "CUDA", vulkan: "Vulkan" };
 
@@ -28,8 +31,13 @@ let steps: WizardStepId[] = [];
 let stepIndex = 0;
 
 let runtimeStatus: WhisperRuntimeStatus | null = null;
+let runtimeRecommendation: RuntimeRecommendation | null = null;
 let runtimeReady = false;
 let runtimeBusy = false;
+let eventsBound = false;
+
+/** Where an engine comes from: the pinned download, or a zip the user picked. */
+type RuntimeSource = { kind: "download" } | { kind: "import"; path: string };
 
 // The model download keeps running while the user moves on to the mode and hotkey steps.
 let modelStarted = false;
@@ -66,15 +74,41 @@ export async function initOnboardingWizard(): Promise<void> {
   }
 
   stepIndex = 0;
-  bindEvents();
-  if (steps.includes("runtime")) void prepareRuntimeStep();
-  renderStep();
-  dom.onboardingWizard.hidden = false;
+  openWizard();
 
   // Setup hotkey recorder for the hotkey step
   if (dom.wizardHotkeyInput && dom.wizardSetupHotkeyBtn && dom.wizardHotkeyStatus) {
     setupHotkeyRecorder("ptt", dom.wizardHotkeyInput, dom.wizardSetupHotkeyBtn, dom.wizardHotkeyStatus);
   }
+}
+
+function openWizard(): void {
+  if (!dom.onboardingWizard) return;
+  bindEvents();
+  if (steps.includes("runtime")) void prepareRuntimeStep();
+  renderStep();
+  dom.onboardingWizard.hidden = false;
+}
+
+/**
+ * "Open setup" of the missing-engine messages (startup check, failed dictation): opens the
+ * wizard with the engine step, also long after the first start. A wizard that is already open
+ * (first run, with a bundled engine that turned out broken) gets the engine step put in front.
+ */
+export async function reopenSpeechEngineSetup(): Promise<void> {
+  if (!dom.onboardingWizard) return;
+  runtimeStatus = await loadRuntimeStatus();
+  runtimeReady = runtimeStatus ? runtimeStatus.any_ready : false;
+  if (dom.onboardingWizard.hidden) {
+    steps = ["runtime"];
+    stepIndex = 0;
+  } else if (!steps.includes("runtime")) {
+    steps = ["runtime", ...steps];
+    stepIndex = 0;
+  } else {
+    stepIndex = steps.indexOf("runtime");
+  }
+  openWizard();
 }
 
 async function loadRuntimeStatus(): Promise<WhisperRuntimeStatus | null> {
@@ -97,6 +131,16 @@ async function hasInstalledModel(): Promise<boolean> {
 }
 
 function bindEvents(): void {
+  if (eventsBound) return;
+  eventsBound = true;
+  bindTroubleshootPanel({
+    onRetry: () => void runRuntimeSetup(selectedEngine()),
+    onImport: (variant, path) => {
+      selectEngine(variant);
+      void runRuntimeSetup(variant, { kind: "import", path });
+    },
+  });
+
   dom.wizardNextBtn?.addEventListener("click", () => {
     if (stepIndex < steps.length - 1) {
       stepIndex++;
@@ -116,8 +160,7 @@ function bindEvents(): void {
   });
 
   byId("wizard-runtime-btn")?.addEventListener("click", () => {
-    const picked = document.querySelector<HTMLInputElement>('input[name="wizard-engine"]:checked');
-    void runRuntimeSetup(picked?.value === "cuda" ? "cuda" : "vulkan");
+    void runRuntimeSetup(selectedEngine());
   });
 
   byId("wizard-download-model-btn")?.addEventListener("click", () => {
@@ -150,6 +193,7 @@ async function prepareRuntimeStep(): Promise<void> {
     console.warn("GPU detection failed", err);
   }
 
+  runtimeRecommendation = recommendation;
   const gpuLine = byId("wizard-gpu-line");
   if (gpuLine) gpuLine.textContent = describeRecommendation(recommendation);
 
@@ -160,13 +204,27 @@ async function prepareRuntimeStep(): Promise<void> {
   }
 
   const wanted: RuntimeVariant = recommendation?.recommended ?? "vulkan";
-  const radio = document.querySelector<HTMLInputElement>(`input[name="wizard-engine"][value="${wanted}"]`);
-  if (radio) {
-    radio.checked = true;
-    radio.dispatchEvent(new Event("change"));
-    const title = radio.closest(".wizard-card")?.querySelector("strong");
-    if (title) title.textContent = `${title.textContent ?? ""} (recommended)`;
+  selectEngine(wanted);
+  // Marked once, also when the step is opened again.
+  const title = document
+    .querySelector<HTMLInputElement>(`input[name="wizard-engine"][value="${wanted}"]`)
+    ?.closest(".wizard-card")
+    ?.querySelector("strong");
+  if (title && !title.textContent?.includes("(recommended)")) {
+    title.textContent = `${title.textContent ?? ""} (recommended)`;
   }
+}
+
+function selectedEngine(): RuntimeVariant {
+  const picked = document.querySelector<HTMLInputElement>('input[name="wizard-engine"]:checked');
+  return picked?.value === "cuda" ? "cuda" : "vulkan";
+}
+
+function selectEngine(variant: RuntimeVariant): void {
+  const radio = document.querySelector<HTMLInputElement>(`input[name="wizard-engine"][value="${variant}"]`);
+  if (!radio) return;
+  radio.checked = true;
+  radio.dispatchEvent(new Event("change"));
 }
 
 function setRuntimeUi(state: "idle" | "running" | "error" | "ready", text: string, percent: number | null = null): void {
@@ -176,8 +234,9 @@ function setRuntimeUi(state: "idle" | "running" | "error" | "ready", text: strin
   const status = byId("wizard-runtime-status");
   if (button) {
     button.disabled = state === "running" || state === "ready";
-    button.hidden = state === "ready";
-    button.textContent = state === "error" ? "Retry" : "Download speech engine";
+    // After a failure the troubleshooting panel carries Retry.
+    button.hidden = state === "ready" || state === "error";
+    button.textContent = "Download speech engine";
   }
   document
     .querySelectorAll<HTMLInputElement>('input[name="wizard-engine"]')
@@ -189,12 +248,19 @@ function setRuntimeUi(state: "idle" | "running" | "error" | "ready", text: strin
 }
 
 /**
- * Downloads and tests one engine. Resolves with the engine to try next when CUDA does not work
- * on this PC; throws with a readable message on any other failure.
+ * Installs and tests one engine, from the download or from a zip the user picked. Resolves with
+ * the engine to try next when CUDA does not work on this PC (and why); throws on any other
+ * failure: the structured error of the backend, or the self-test's.
  */
-async function attemptRuntime(variant: RuntimeVariant): Promise<{ fallback: RuntimeVariant } | null> {
+async function attemptRuntime(
+  variant: RuntimeVariant,
+  source: RuntimeSource
+): Promise<{ fallback: RuntimeVariant; reason: string } | null> {
   const label = VARIANT_LABEL[variant];
-  setRuntimeUi("running", `Downloading the ${label} speech engine...`);
+  setRuntimeUi(
+    "running",
+    source.kind === "import" ? `Checking the ${label} package...` : `Downloading the ${label} speech engine...`
+  );
   const unlisten = await listen<WhisperRuntimeProgress>("whisper-runtime:progress", (event) => {
     if (event.payload.variant !== variant) return;
     const { percent, text } = describeProgress(
@@ -205,7 +271,10 @@ async function attemptRuntime(variant: RuntimeVariant): Promise<{ fallback: Runt
     setRuntimeUi("running", `${event.payload.message} ${percent === null ? "" : text}`.trim(), percent);
   });
   try {
-    runtimeStatus = await invoke<WhisperRuntimeStatus>("download_whisper_runtime", { variant });
+    runtimeStatus =
+      source.kind === "import"
+        ? await invoke<WhisperRuntimeStatus>("import_whisper_runtime_zip", { variant, path: source.path })
+        : await invoke<WhisperRuntimeStatus>("download_whisper_runtime", { variant });
   } finally {
     unlisten();
   }
@@ -213,7 +282,7 @@ async function attemptRuntime(variant: RuntimeVariant): Promise<{ fallback: Runt
   setRuntimeUi("running", `Testing the ${label} speech engine...`);
   const result = await invoke<RuntimeVerifyResult>("verify_whisper_runtime", { variant });
   const next = planAfterSelfTest(result, runtimeStatus);
-  if (next.action === "failed") throw new Error(next.message);
+  if (next.action === "failed") throw selfTestError(label, next.message);
   if (next.action === "ready") return null;
 
   // CUDA does not run here (old driver, no usable GPU): use Vulkan, and keep it that way.
@@ -223,24 +292,48 @@ async function attemptRuntime(variant: RuntimeVariant): Promise<{ fallback: Runt
     "running",
     `CUDA does not work on this PC: ${result.detail} Using Vulkan instead.`
   );
-  return next.action === "switch" ? null : { fallback: next.variant };
+  return next.action === "switch" ? null : { fallback: next.variant, reason: result.detail };
 }
 
-async function runRuntimeSetup(first: RuntimeVariant): Promise<void> {
+function selfTestError(label: string, detail: string): RuntimeSetupError {
+  return {
+    code: "self_test",
+    message: `The ${label} speech engine was installed but does not start: ${detail}`,
+    hint: "Retry installs it again. If it keeps failing, copy the diagnostics when you ask for help.",
+    detail,
+  };
+}
+
+async function runRuntimeSetup(first: RuntimeVariant, firstSource: RuntimeSource = { kind: "download" }): Promise<void> {
   if (runtimeBusy) return;
   runtimeBusy = true;
+  hideTroubleshoot();
   let variant = first;
+  let source = firstSource;
+  let context = "";
   try {
     for (;;) {
-      const outcome = await attemptRuntime(variant);
+      const outcome = await attemptRuntime(variant, source);
       if (!outcome) break;
+      // CUDA does not run here: Vulkan comes from the download, whatever the first source was.
+      context = `CUDA does not work on this PC: ${outcome.reason}`;
       variant = outcome.fallback;
+      source = { kind: "download" };
     }
     runtimeReady = true;
     setRuntimeUi("ready", `Speech engine ready (${VARIANT_LABEL[variant]}).`);
   } catch (err) {
     console.error("Speech engine setup failed", err);
-    setRuntimeUi("error", `Speech engine setup failed: ${errorText(err)}`);
+    const error = toRuntimeError(err);
+    setRuntimeUi("error", "Speech engine setup failed.");
+    showTroubleshoot({
+      error,
+      variant,
+      // After a CUDA failure the Vulkan package is the one to offer first.
+      preferred: context ? "vulkan" : (runtimeRecommendation?.recommended ?? null),
+      recommendation: runtimeRecommendation,
+      context: context || undefined,
+    });
   } finally {
     runtimeBusy = false;
     renderStep();

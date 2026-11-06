@@ -119,31 +119,32 @@ fn validate_variant(variant: &Variant) -> Result<(), String> {
     Ok(())
 }
 
-/// Only the official release path of this project may serve the runtime. A URL that `Url`
-/// would rewrite (`..`, default port, upper-case host) or that carries credentials, a query or
-/// a fragment is refused as well.
-fn check_pinned_url(url: &str) -> Result<(), String> {
-    let refuse = || {
-        Err(format!(
-            "Refusing speech engine download from '{}': only {} is allowed.",
-            url, DOWNLOAD_URL_PREFIX
-        ))
-    };
+/// `url` is exactly what `Url` would print, `https://github.com/...` under `prefix`, without
+/// credentials, query or fragment: nothing that `Url` would rewrite (`..`, default port,
+/// upper-case host) and nothing that points to another host.
+fn is_plain_github_url(url: &str, prefix: &str) -> bool {
     let Ok(parsed) = Url::parse(url) else {
-        return refuse();
+        return false;
     };
-    if parsed.as_str() == url
-        && url.starts_with(DOWNLOAD_URL_PREFIX)
+    parsed.as_str() == url
+        && url.starts_with(prefix)
         && parsed.scheme() == "https"
         && parsed.host_str() == Some("github.com")
         && parsed.username().is_empty()
         && parsed.password().is_none()
         && parsed.query().is_none()
         && parsed.fragment().is_none()
-    {
+}
+
+/// Only the official release path of this project may serve the runtime.
+fn check_pinned_url(url: &str) -> Result<(), String> {
+    if is_plain_github_url(url, DOWNLOAD_URL_PREFIX) {
         Ok(())
     } else {
-        refuse()
+        Err(format!(
+            "Refusing speech engine download from '{}': only {} is allowed.",
+            url, DOWNLOAD_URL_PREFIX
+        ))
     }
 }
 
@@ -396,6 +397,73 @@ fn swap_into_place(staging: &Path, target: &Path, backup: &Path) -> Result<(), S
     Ok(())
 }
 
+fn begin_job(variant_name: &str, root: &Path) -> Result<RuntimeJob, String> {
+    RuntimeJob::begin(
+        format!("whisper-runtime:{}:{}", variant_name, root.display()),
+        format!(
+            "Another setup of the {} speech engine is already running.",
+            variant_name
+        ),
+    )
+}
+
+/// Creates the runtime folder, clears what an interrupted run left behind and returns the stamp
+/// that names this run's download, staging and backup entries.
+fn prepare_root(root: &Path, variant_name: &str) -> Result<u64, String> {
+    fs::create_dir_all(root)
+        .map_err(|e| describe_write_error("create the speech engine folder", &e))?;
+    clean_leftovers(root, variant_name);
+    Ok(unique_install_stamp())
+}
+
+/// Unpacks and installs an archive that is open on its locked handle and whose SHA-256 is
+/// `digest` (computed from that very handle). Shared by the download and the manual import:
+/// the pinned checksum, the pinned file list, the staging folder and the atomic swap are the
+/// same for both, and on every failure only the previous install (if any) remains.
+fn install_archive(
+    mut file: File,
+    digest: &str,
+    variant_name: &str,
+    variant: &Variant,
+    root: &Path,
+    stamp: u64,
+    on_progress: &mut Progress<'_>,
+) -> Result<PathBuf, String> {
+    if !digest.eq_ignore_ascii_case(&variant.zip_sha256) {
+        return Err(format!(
+            "Speech engine archive checksum mismatch. Expected {}, got {}.",
+            variant.zip_sha256, digest
+        ));
+    }
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("Failed to rewind the downloaded archive: {}", e))?;
+    let mut zip = ZipArchive::new(file)
+        .map_err(|e| format!("The downloaded archive is not a valid zip file: {}", e))?;
+
+    let staging = root.join(format!(".staging-{}-{}", variant_name, stamp));
+    let backup = root.join(format!(".old-{}-{}", variant_name, stamp));
+    let target = root.join(variant_name);
+    // Goes away on every exit; the staging folder only stays once it is the install.
+    let mut staging_guard = RemoveOnDrop::new(staging.clone());
+    fs::create_dir_all(&staging)
+        .map_err(|e| describe_write_error("create the staging folder", &e))?;
+    on_progress("extract", "Unpacking speech engine...", None, None);
+    extract_pinned(&mut zip, &variant.files, &staging, &mut |done, total| {
+        on_progress(
+            "extract",
+            &format!("Unpacking speech engine ({}/{})...", done, total),
+            None,
+            None,
+        )
+    })?;
+
+    on_progress("install", "Installing speech engine...", None, None);
+    swap_into_place(&staging, &target, &backup)?;
+    staging_guard.disarm();
+    on_progress("done", "Speech engine installed.", None, None);
+    Ok(target)
+}
+
 /// Downloads, verifies and installs `variant_name` into `<root>/<variant_name>`.
 /// On every failure nothing but the previous install (if any) remains on disk.
 pub(crate) fn install_variant(
@@ -406,25 +474,11 @@ pub(crate) fn install_variant(
     on_progress: &mut Progress<'_>,
 ) -> Result<PathBuf, String> {
     validate_download_url(&variant.url)?;
-    let _job = RuntimeJob::begin(
-        format!("whisper-runtime:{}:{}", variant_name, root.display()),
-        format!(
-            "A download of the {} speech engine is already running.",
-            variant_name
-        ),
-    )?;
-    fs::create_dir_all(root)
-        .map_err(|e| describe_write_error("create the speech engine folder", &e))?;
-    clean_leftovers(root, variant_name);
-
-    let stamp = unique_install_stamp();
+    let _job = begin_job(variant_name, root)?;
+    let stamp = prepare_root(root, variant_name)?;
     let zip_path = root.join(format!(".download-{}-{}.zip", variant_name, stamp));
-    let staging = root.join(format!(".staging-{}-{}", variant_name, stamp));
-    let backup = root.join(format!(".old-{}-{}", variant_name, stamp));
-    let target = root.join(variant_name);
-    // Both go away on every exit; the staging folder only stays once it is the install.
+    // Goes away on every exit, after the archive handle below is closed.
     let _zip_guard = RemoveOnDrop::new(zip_path.clone());
-    let mut staging_guard = RemoveOnDrop::new(staging.clone());
 
     on_progress(
         "download",
@@ -452,34 +506,15 @@ pub(crate) fn install_variant(
     let mut file = open_archive_locked(&zip_path)
         .map_err(|e| format!("Failed to open the downloaded archive: {}", e))?;
     let digest = sha256_reader(&mut file)?;
-    if !digest.eq_ignore_ascii_case(&variant.zip_sha256) {
-        return Err(format!(
-            "Speech engine archive checksum mismatch. Expected {}, got {}.",
-            variant.zip_sha256, digest
-        ));
-    }
-    file.seek(SeekFrom::Start(0))
-        .map_err(|e| format!("Failed to rewind the downloaded archive: {}", e))?;
-    let mut zip = ZipArchive::new(file)
-        .map_err(|e| format!("The downloaded archive is not a valid zip file: {}", e))?;
-
-    fs::create_dir_all(&staging)
-        .map_err(|e| describe_write_error("create the staging folder", &e))?;
-    on_progress("extract", "Unpacking speech engine...", None, None);
-    extract_pinned(&mut zip, &variant.files, &staging, &mut |done, total| {
-        on_progress(
-            "extract",
-            &format!("Unpacking speech engine ({}/{})...", done, total),
-            None,
-            None,
-        )
-    })?;
-
-    on_progress("install", "Installing speech engine...", None, None);
-    swap_into_place(&staging, &target, &backup)?;
-    staging_guard.disarm();
-    on_progress("done", "Speech engine installed.", None, None);
-    Ok(target)
+    install_archive(
+        file,
+        &digest,
+        variant_name,
+        variant,
+        root,
+        stamp,
+        on_progress,
+    )
 }
 
 // ---------------------------------------------------------------------------------------
@@ -830,7 +865,7 @@ pub(crate) fn get_whisper_runtime_status() -> Result<WhisperRuntimeStatus, Strin
 pub(crate) async fn download_whisper_runtime(
     app: AppHandle,
     variant: String,
-) -> Result<WhisperRuntimeStatus, String> {
+) -> Result<WhisperRuntimeStatus, RuntimeError> {
     tauri::async_runtime::spawn_blocking(move || {
         let (_, entry) = load_variant(&variant)?;
         let root = crate::paths::whisper_runtime_root();
@@ -852,10 +887,10 @@ pub(crate) async fn download_whisper_runtime(
             warn!("[whisper.runtime] {} download failed: {}", variant, error);
         }
         result?;
-        status_in(&root)
+        Ok(status_in(&root)?)
     })
     .await
-    .map_err(|e| format!("Speech engine download task failed: {}", e))?
+    .map_err(|e| RuntimeError::from(format!("Speech engine download task failed: {}", e)))?
 }
 
 #[tauri::command]
@@ -890,5 +925,10 @@ pub(crate) async fn verify_whisper_runtime(
     .map_err(|e| format!("Speech engine self-test task failed: {}", e))?
 }
 
+pub(crate) mod troubleshoot;
+use troubleshoot::RuntimeError;
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod troubleshoot_tests;

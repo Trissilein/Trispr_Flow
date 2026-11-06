@@ -4,13 +4,13 @@ use std::net::TcpListener;
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
-const STALL: Duration = Duration::from_secs(5);
+pub(super) const STALL: Duration = Duration::from_secs(5);
 
-fn sha_hex(data: &[u8]) -> String {
+pub(super) fn sha_hex(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
 }
 
-fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+pub(super) fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut buf = Cursor::new(Vec::new());
     {
         let mut writer = zip::ZipWriter::new(&mut buf);
@@ -29,7 +29,7 @@ fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 /// Files of the "good" test runtime: name -> content.
-fn good_files() -> Vec<(&'static str, Vec<u8>)> {
+pub(super) fn good_files() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         ("whisper-cli.exe", b"cli-binary".to_vec()),
         ("whisper-server.exe", b"server-binary".to_vec()),
@@ -37,7 +37,7 @@ fn good_files() -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
-fn pin_for(files: &[(&str, Vec<u8>)], zip: &[u8], url: &str) -> Variant {
+pub(super) fn pin_for(files: &[(&str, Vec<u8>)], zip: &[u8], url: &str) -> Variant {
     Variant {
         url: url.to_string(),
         zip_sha256: sha_hex(zip),
@@ -53,7 +53,7 @@ fn pin_for(files: &[(&str, Vec<u8>)], zip: &[u8], url: &str) -> Variant {
     }
 }
 
-fn zip_of(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+pub(super) fn zip_of(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
     let entries: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (*n, d.as_slice())).collect();
     make_zip(&entries)
 }
@@ -79,14 +79,14 @@ fn serve(body: Vec<u8>, send: usize, content_length: usize) -> String {
     format!("http://127.0.0.1:{}/whisper-runtime-test.zip", port)
 }
 
-fn serve_whole(body: &[u8]) -> String {
+pub(super) fn serve_whole(body: &[u8]) -> String {
     serve(body.to_vec(), body.len(), body.len())
 }
 
-struct TempRoot(PathBuf);
+pub(super) struct TempRoot(pub(super) PathBuf);
 
 impl TempRoot {
-    fn new(tag: &str) -> Self {
+    pub(super) fn new(tag: &str) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "trispr-whisper-runtime-test-{}-{}-{}",
             tag,
@@ -98,15 +98,15 @@ impl TempRoot {
     }
     /// The runtime root used by the install; a child, so a traversing entry would leave
     /// a trace in `self.0`.
-    fn root(&self) -> PathBuf {
+    pub(super) fn root(&self) -> PathBuf {
         self.0.join("runtime")
     }
-    fn names(&self, dir: &Path) -> Vec<String> {
+    pub(super) fn names(&self, dir: &Path) -> Vec<String> {
         names_in(dir)
     }
 }
 
-fn names_in(dir: &Path) -> Vec<String> {
+pub(super) fn names_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(dir)
         .map(|rd| {
             rd.flatten()

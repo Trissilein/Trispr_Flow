@@ -93,7 +93,8 @@ import { playAudioCue } from "./audio-cues";
 import { levelToDb, thresholdToPercent } from "./ui-helpers";
 import { initExportDialog } from "./export-dialog";
 import { initExpertMode } from "./expert-mode";
-import { initOnboardingWizard } from "./onboarding-wizard";
+import { initOnboardingWizard, reopenSpeechEngineSetup } from "./onboarding-wizard";
+import { isRuntimeMissingMessage } from "./onboarding-wizard-logic";
 import { initPipelineStatus } from "./pipeline-status";
 import { ingestEditDelta } from "./vocab-auto-learn";
 import { scheduleVocabCleanupIfNeeded } from "./vocab-cleanup";
@@ -965,12 +966,14 @@ async function bootstrap() {
       setCaptureStatus("idle");
       if (dom.statusMessage) dom.statusMessage.textContent = event.payload;
 
-      // Show toast for transcription errors
+      // Show toast for transcription errors; a missing speech engine can be fixed right here.
+      const engineMissing = isRuntimeMissingMessage(event.payload);
       showToast({
         type: "error",
         title: "Transcription Failed",
         message: event.payload,
-        duration: 7000,
+        duration: engineMissing ? 15000 : 7000,
+        ...(engineMissing ? { actionLabel: "Open setup", onAction: () => reopenSpeechEngineSetup() } : {}),
       });
     }),
     // Listen for app-wide errors from backend
@@ -1058,6 +1061,10 @@ async function checkDependencyPreflightOnStartup() {
           ? `${first.message}${first.hint ? ` ${first.hint}` : ""}`
           : `${report.blocking_count} blocking dependency issue(s) detected.`,
         duration: 12000,
+        // The speech engine can be downloaded (or imported) in the setup wizard.
+        ...(first?.id === "whisper_runtime"
+          ? { actionLabel: "Open setup", onAction: () => reopenSpeechEngineSetup() }
+          : {}),
       });
     }
 

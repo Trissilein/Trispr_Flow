@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Vocabulary learning**: a corrected hyphenated compound (`WhatsApp-Tickets` -> `WhatsUp-Tickets`) now teaches the changed part (`WhatsApp` -> `WhatsUp`) and counts together with the bare word instead of stalling as a one-off pair. A typography swap by the target app (`Don't` -> `Don’t`) is no longer learned as a rule.
+- **Edit capture** (what feeds vocabulary learning): the pending dictation now survives 10 minutes instead of 60 seconds; several pastes into the same window are kept together while they are still in the field, so an edit to an earlier segment is seen too, and a message sent with the Send button no longer poisons the next capture, a one-word dictation corrected as a whole (`WhatsApp` -> `WhatsUp`) is learnable, pasted segments keep the real boundary (glued stays glued), and an Enter whose field no longer holds the dictation (`outcome=unrelated`) learns nothing; the field text is also remembered after each typing pause and, unless a key or mouse click came after it, used when the app has already emptied its input by the time Enter is processed; Shift+Enter (line break) no longer ends a capture; Chromium/Electron inputs whose focused node has no text pattern are read from the editable container above it; text-pattern fields up to 4,000 characters are read whole, so a correction on an earlier line is not lost when the caret sits on the last line (larger editors still read the caret line); every captured Enter writes one `[enter-capture] outcome=…` line to the log (`emitted`, `no_edit`, `unreadable`, `target_changed`, `expired`), without any text content.
+
 ## [0.10.0] - 2026-11-06
 
 ### Added

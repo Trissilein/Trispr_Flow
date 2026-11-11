@@ -133,6 +133,22 @@ function isUselessToken(t: string): boolean {
 }
 
 /**
+ * Hyphenated compounds with the same number of parts are compared part by part, so
+ * WhatsApp-Tickets -> WhatsUp-Tickets teaches WhatsApp -> WhatsUp and counts together with
+ * every other occurrence of the bare word. Anything else stays one pair.
+ */
+function splitCompound(from: string, to: string): SubstitutionPair[] {
+  const fromParts = from.split("-");
+  const toParts = to.split("-");
+  if (fromParts.length < 2 || fromParts.length !== toParts.length) return [{ from, to }];
+  const pairs: SubstitutionPair[] = [];
+  fromParts.forEach((part, idx) => {
+    if (part !== toParts[idx]) pairs.push({ from: part, to: toParts[idx] });
+  });
+  return pairs;
+}
+
+/**
  * Compute substitution pairs between pasted and submitted.
  *
  * 1. Tokenize both strings.
@@ -219,8 +235,10 @@ export function wordDiff(pasted: string, submitted: string): SubstitutionPair[] 
       const from = stripEdgePunct(rawFrom);
       const to = stripEdgePunct(rawTo);
       if (from === to) continue;
-      if (isUselessToken(from) || isUselessToken(to)) continue;
-      pairs.push({ from, to });
+      for (const pair of splitCompound(from, to)) {
+        if (isUselessToken(pair.from) || isUselessToken(pair.to)) continue;
+        pairs.push(pair);
+      }
     }
   }
   return pairs;
@@ -299,8 +317,18 @@ function isAllFunctionWords(text: string): boolean {
     .every((word) => FUNCTION_WORDS.has(word));
 }
 
+/** Typographic quotes/dashes folded to ASCII: editors and chat apps swap them silently. */
+function normalizeTypography(text: string): string {
+  return text
+    .replace(/[‘’‛ʼ`´]/g, "'")
+    .replace(/[“”„]/g, '"')
+    .replace(/[‐‑‒–—]/g, "-");
+}
+
 export function classifyCorrection(from: string, to: string): CorrectionKind {
   if (isAllFunctionWords(from) || isAllFunctionWords(to)) return "reject";
+  // Don't -> Don’t is a typography swap by the app, not a mishearing: never learn it.
+  if (from !== to && normalizeTypography(from) === normalizeTypography(to)) return "reject";
 
   const a = foldForCompare(from);
   const b = foldForCompare(to);

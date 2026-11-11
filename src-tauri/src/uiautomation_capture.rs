@@ -4,10 +4,10 @@
 //!   - Worker-thread: UIAutomation COM calls, event emission, re-paste
 
 use std::cell::RefCell;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use tauri::Manager;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 #[cfg(target_os = "windows")]
 use windows::{
@@ -20,6 +20,9 @@ pub use crate::state::EnterCaptureState;
 use crate::state::TargetIdentity;
 
 const VK_RETURN_CODE: u32 = 0x0D;
+const VK_SHIFT_CODE: u32 = 0x10;
+const VK_LSHIFT_CODE: u32 = 0xA0;
+const VK_RSHIFT_CODE: u32 = 0xA1;
 const VK_CONTROL_CODE: u32 = 0x11;
 const VK_MENU_CODE: u32 = 0x12;
 const VK_LCONTROL_CODE: u32 = 0xA2;
@@ -32,6 +35,36 @@ const WM_SYSKEYDOWN_CODE: u32 = 0x0104;
 const WM_SYSKEYUP_CODE: u32 = 0x0105;
 const WM_MBUTTONUP_CODE: u32 = 0x0208;
 
+/// How long after a paste an Enter still counts as "message sent". Editing a long dictation and
+/// then sending easily takes minutes; the old 60 s window silently dropped those corrections.
+const CAPTURE_WINDOW_MS: u64 = 10 * 60 * 1000;
+/// Typing pause after which the focused field is read into `last_snapshot`.
+const SNAPSHOT_IDLE_MS: u64 = 400;
+/// Pastes into the same target are merged into one text (dictation arrives in several segments).
+const MAX_ACCUMULATED_PASTE_CHARS: usize = 8_000;
+
+/// Time of the latest key-down anywhere. The hook only stores it (cheap); the worker decides.
+static KEY_ACTIVITY_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// Append a new paste to the text pasted before it into the same target. A repeated paste of the
+/// same text (re-paste gesture) does not duplicate it.
+fn merge_paste(prev: &str, text: &str) -> String {
+    if prev.ends_with(text) {
+        return prev.to_owned();
+    }
+    if prev.chars().count() + text.chars().count() + 1 > MAX_ACCUMULATED_PASTE_CHARS {
+        return text.to_owned();
+    }
+    format!("{prev} {text}")
+}
+
 #[derive(Clone, Copy)]
 enum HookSignal {
     Enter,
@@ -43,10 +76,7 @@ enum HookSignal {
 /// user is still editing the same target. Pastes into Trispr's own window are
 /// ignored — we never want to learn from edits in our own UI.
 pub fn record_paste(state: &EnterCaptureState, text: &str) {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    let now_ms = now_ms();
 
     #[cfg(target_os = "windows")]
     let target = unsafe {
@@ -66,12 +96,50 @@ pub fn record_paste(state: &EnterCaptureState, text: &str) {
         }
     };
 
+    // Dictation often lands in the same message as several segments: keep them together so an
+    // edit to an earlier segment is still seen when the message is sent.
+    #[cfg(target_os = "windows")]
+    let same_target = state
+        .last_paste_target
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .map(|t| t.hwnd == target.hwnd && t.pid == target.pid)
+        .unwrap_or(false);
+    #[cfg(not(target_os = "windows"))]
+    let same_target = false;
+
     if let Ok(mut guard) = state.last_paste.lock() {
-        *guard = Some((text.to_owned(), now_ms));
+        let merged = match guard.as_ref() {
+            Some((prev, prev_ms))
+                if same_target && now_ms.saturating_sub(*prev_ms) <= CAPTURE_WINDOW_MS =>
+            {
+                merge_paste(prev, text)
+            }
+            _ => text.to_owned(),
+        };
+        *guard = Some((merged, now_ms));
     }
     #[cfg(target_os = "windows")]
     if let Ok(mut guard) = state.last_paste_target.lock() {
         *guard = Some(target);
+    }
+    if let Ok(mut guard) = state.last_snapshot.lock() {
+        *guard = None;
+    }
+}
+
+/// Forget the pending paste after its Enter was handled, whatever the outcome: that Enter sent
+/// the message, so the next dictation starts a fresh capture.
+fn consume_capture(state: &EnterCaptureState) {
+    if let Ok(mut guard) = state.last_paste.lock() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = state.last_paste_target.lock() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = state.last_snapshot.lock() {
+        *guard = None;
     }
 }
 
@@ -79,6 +147,7 @@ thread_local! {
     static HOOK_TX: RefCell<Option<mpsc::SyncSender<HookSignal>>> = const { RefCell::new(None) };
     static CTRL_HELD: RefCell<bool> = const { RefCell::new(false) };
     static ALT_HELD: RefCell<bool> = const { RefCell::new(false) };
+    static SHIFT_HELD: RefCell<bool> = const { RefCell::new(false) };
 }
 
 /// Start both threads. Call once from app setup.
@@ -161,10 +230,20 @@ unsafe extern "system" fn ll_keyboard_proc(ncode: i32, wparam: WPARAM, lparam: L
                 VK_MENU_CODE | VK_LMENU_CODE | VK_RMENU_CODE => {
                     ALT_HELD.with(|held| *held.borrow_mut() = is_down);
                 }
+                VK_SHIFT_CODE | VK_LSHIFT_CODE | VK_RSHIFT_CODE => {
+                    SHIFT_HELD.with(|held| *held.borrow_mut() = is_down);
+                }
                 _ => {}
             }
         }
-        if message == WM_KEYDOWN_CODE && kbd.vkCode == VK_RETURN_CODE {
+        if is_down {
+            KEY_ACTIVITY_MS.store(now_ms(), Ordering::Relaxed);
+        }
+        // Shift+Enter is a line break in chat inputs, not "send": it must not consume the capture.
+        if message == WM_KEYDOWN_CODE
+            && kbd.vkCode == VK_RETURN_CODE
+            && !SHIFT_HELD.with(|held| *held.borrow())
+        {
             HOOK_TX.with(|cell| {
                 if let Some(tx) = cell.borrow().as_ref() {
                     let _ = tx.try_send(HookSignal::Enter);
@@ -216,6 +295,7 @@ fn run_worker_loop(
                 }
             };
 
+        let mut snapshot_activity: u64 = 0;
         loop {
             if shutdown_rx.try_recv().is_ok()
                 || matches!(
@@ -232,10 +312,67 @@ fn run_worker_loop(
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
+            maybe_snapshot(&app, &automation, &mut snapshot_activity);
         }
 
         drop(automation);
         CoUninitialize();
+    }
+}
+
+/// True when the foreground window is still the one the text was pasted into.
+#[cfg(target_os = "windows")]
+fn foreground_matches(target: &TargetIdentity) -> bool {
+    unsafe {
+        let current_hwnd = GetForegroundWindow();
+        if current_hwnd.0.is_null() {
+            return false;
+        }
+        let mut current_pid: u32 = 0;
+        let _ = GetWindowThreadProcessId(current_hwnd, Some(&mut current_pid));
+        current_hwnd.0 as isize == target.hwnd && current_pid == target.pid
+    }
+}
+
+/// While a paste is live, remember what the field looked like after each typing pause. Some apps
+/// clear their input in the same instant Enter is pressed; without this the edit is gone before
+/// the Enter handler can read it.
+#[cfg(target_os = "windows")]
+fn maybe_snapshot(app: &tauri::AppHandle, automation: &IUIAutomation2, handled_activity: &mut u64) {
+    let activity = KEY_ACTIVITY_MS.load(Ordering::Relaxed);
+    if activity == 0 || activity == *handled_activity {
+        return;
+    }
+    let now = now_ms();
+    if now.saturating_sub(activity) < SNAPSHOT_IDLE_MS {
+        return;
+    }
+    *handled_activity = activity;
+
+    let state = app.state::<crate::state::AppState>();
+    let live = match state.enter_capture.last_paste.lock() {
+        Ok(guard) => matches!(&*guard, Some((_, ms)) if now.saturating_sub(*ms) <= CAPTURE_WINDOW_MS),
+        Err(_) => false,
+    };
+    if !live {
+        return;
+    }
+    let target = state
+        .enter_capture
+        .last_paste_target
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    let Some(target) = target else { return };
+    if !foreground_matches(&target) {
+        return;
+    }
+    if let Some((text, _)) = unsafe { read_focused_value(automation) } {
+        if !text.is_empty() {
+            if let Ok(mut guard) = state.enter_capture.last_snapshot.lock() {
+                *guard = Some(cap_submitted(text));
+            }
+        }
     }
 }
 
@@ -246,16 +383,14 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
     let (pasted, last_ms) = match state.enter_capture.last_paste.lock() {
         Ok(guard) => match guard.clone() {
             Some(tuple) => tuple,
-            None => return,
+            None => return, // no dictation pending: every Enter on the system lands here, stay quiet
         },
         Err(_) => return,
     };
 
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    if last_ms == 0 || now_ms.saturating_sub(last_ms) > 60_000 {
+    if last_ms == 0 || now_ms().saturating_sub(last_ms) > CAPTURE_WINDOW_MS {
+        info!("[enter-capture] outcome=expired pasted_chars={}", pasted.chars().count());
+        consume_capture(&state.enter_capture);
         return;
     }
 
@@ -271,36 +406,35 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
     let Some(stored_target) = stored_target else {
         return;
     };
-    let same_target = unsafe {
-        let current_hwnd = GetForegroundWindow();
-        if current_hwnd.0.is_null() {
-            false
-        } else {
-            let mut current_pid: u32 = 0;
-            let _ = GetWindowThreadProcessId(current_hwnd, Some(&mut current_pid));
-            current_hwnd.0 as isize == stored_target.hwnd && current_pid == stored_target.pid
-        }
-    };
-    if !same_target {
-        if let Ok(mut guard) = state.enter_capture.last_paste_target.lock() {
-            *guard = None;
-        }
+    if !foreground_matches(&stored_target) {
+        info!("[enter-capture] outcome=target_changed");
+        consume_capture(&state.enter_capture);
         return;
     }
 
+    let snapshot = state
+        .enter_capture
+        .last_snapshot
+        .lock()
+        .ok()
+        .and_then(|g| g.clone());
+    // Live read wins. The snapshot only stands in when the app has already emptied (or hidden)
+    // its input by the time we read it.
     let (current_text, pattern_used) = match unsafe { read_focused_value(automation) } {
-        Some(t) => t,
-        None => return,
+        Some((text, pattern)) if !text.is_empty() => (text, pattern),
+        _ => match snapshot {
+            Some(text) if !text.is_empty() => (text, "snapshot"),
+            _ => {
+                info!("[enter-capture] outcome=unreadable pasted_chars={}", pasted.chars().count());
+                consume_capture(&state.enter_capture);
+                return;
+            }
+        },
     };
-    if current_text.is_empty() || current_text == pasted {
+    consume_capture(&state.enter_capture);
+    if current_text == pasted {
+        info!("[enter-capture] outcome=no_edit pattern={pattern_used}");
         return;
-    }
-
-    if let Ok(mut guard) = state.enter_capture.last_paste.lock() {
-        *guard = None;
-    }
-    if let Ok(mut guard) = state.enter_capture.last_paste_target.lock() {
-        *guard = None;
     }
 
     #[derive(Clone, serde::Serialize)]
@@ -311,6 +445,11 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         pattern_used: String,
     }
 
+    info!(
+        "[enter-capture] outcome=emitted pattern={pattern_used} pasted_chars={} submitted_chars={}",
+        pasted.chars().count(),
+        current_text.chars().count()
+    );
     use tauri::Emitter;
     if let Err(e) = app.emit(
         "enter_capture:edit_detected",
@@ -350,8 +489,25 @@ fn cap_submitted(text: String) -> String {
 ///    in vocab-auto-learn shrinks oversized output.
 #[cfg(target_os = "windows")]
 unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<(String, &'static str)> {
-    let element = automation.GetFocusedElement().ok()?;
+    let focused = automation.GetFocusedElement().ok()?;
+    if let Some(found) = read_element_text(&focused) {
+        return Some(found);
+    }
+    // Chromium/Electron often focuses a child node without text patterns: the editable
+    // container sits a few levels up.
+    let walker = automation.ControlViewWalker().ok()?;
+    let mut current = focused;
+    for _ in 0..3 {
+        current = walker.GetParentElement(&current).ok()?;
+        if let Some(found) = read_element_text(&current) {
+            return Some(found);
+        }
+    }
+    None
+}
 
+#[cfg(target_os = "windows")]
+unsafe fn read_element_text(element: &IUIAutomationElement) -> Option<(String, &'static str)> {
     if element
         .CurrentIsPassword()
         .map(|is_password| is_password.as_bool())
@@ -430,6 +586,14 @@ mod tests {
         assert!(!is_repaste_gesture(WM_MBUTTONUP_CODE, false, true));
         assert!(!is_repaste_gesture(WM_MBUTTONUP_CODE, false, false));
         assert!(!is_repaste_gesture(WM_KEYUP_CODE, true, true));
+    }
+
+    #[test]
+    fn pastes_into_one_target_are_merged_without_duplicating_a_repaste() {
+        assert_eq!(merge_paste("Erster Teil.", "Zweiter Teil."), "Erster Teil. Zweiter Teil.");
+        assert_eq!(merge_paste("Erster. Zweiter.", "Zweiter."), "Erster. Zweiter.");
+        let long = "x".repeat(MAX_ACCUMULATED_PASTE_CHARS);
+        assert_eq!(merge_paste(&long, "neu"), "neu");
     }
 
     #[test]

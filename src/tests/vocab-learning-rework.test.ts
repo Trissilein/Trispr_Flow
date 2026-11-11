@@ -85,6 +85,36 @@ describe("wordDiff — phrase pairs", () => {
   });
 });
 
+describe("wordDiff — compounds and broken characters", () => {
+  it("a hyphenated compound teaches the changed part only", () => {
+    expect(
+      wordDiff("Schau dir die WhatsApp-Tickets an.", "Schau dir die WhatsUp-Tickets an."),
+    ).toEqual([{ from: "WhatsApp", to: "WhatsUp" }]);
+  });
+
+  it("compound and bare word share one counter and promote together", () => {
+    ingestEditDelta("Schau dir die WhatsApp-Tickets an.", "Schau dir die WhatsUp-Tickets an.");
+    ingestEditDelta("Öffne WhatsApp bitte.", "Öffne WhatsUp bitte.");
+    expect(settings!.postproc_custom_vocab["WhatsApp"]).toBe("WhatsUp");
+    expect(settings!.vocab_terms).toContain("WhatsUp");
+  });
+
+  it("compounds with different part counts stay one pair", () => {
+    expect(wordDiff("Das ist Kick-off Plan", "Das ist Kickoff Plan")).toEqual([
+      { from: "Kick-off", to: "Kickoff" },
+    ]);
+  });
+
+  it("a typographic apostrophe swap is never a correction", () => {
+    expect(classifyCorrection("Don't", "Don’t")).toBe("reject");
+    expect(classifyCorrection("That's", "That’s")).toBe("reject");
+    ingestEditDelta("Don't stop now please", "Don’t stop now please");
+    ingestEditDelta("Don't stop now please", "Don’t stop now please");
+    expect(settings!.postproc_custom_vocab["Don't"]).toBeUndefined();
+    expect(settings!.edit_substitutions).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Similarity gate
 // ---------------------------------------------------------------------------

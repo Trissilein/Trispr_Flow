@@ -820,4 +820,15 @@ mod tests {
         settings.postproc_custom_vocab_enabled = true;
         assert_eq!(apply_custom_vocab_rules("Trispa", &settings), "Trispr");
     }
+
+    #[test]
+    fn learned_rule_applies_inside_hyphenated_compounds_and_possessives() {
+        let mut settings = Settings::default();
+        settings.postproc_custom_vocab = vocab(&[("WhatsApp", "WhatsUp")]);
+        settings.postproc_custom_vocab_enabled = true;
+        assert_eq!(
+            apply_custom_vocab_rules("Schau dir die WhatsApp-Tickets an, WhatsApp's Liste.", &settings),
+            "Schau dir die WhatsUp-Tickets an, WhatsUp's Liste."
+        );
+    }
 }

@@ -33,6 +33,8 @@ const WM_KEYDOWN_CODE: u32 = 0x0100;
 const WM_KEYUP_CODE: u32 = 0x0101;
 const WM_SYSKEYDOWN_CODE: u32 = 0x0104;
 const WM_SYSKEYUP_CODE: u32 = 0x0105;
+const WM_LBUTTONUP_CODE: u32 = 0x0202;
+const WM_RBUTTONUP_CODE: u32 = 0x0205;
 const WM_MBUTTONUP_CODE: u32 = 0x0208;
 
 /// How long after a paste an Enter still counts as "message sent". Editing a long dictation and
@@ -43,7 +45,7 @@ const SNAPSHOT_IDLE_MS: u64 = 400;
 /// Pastes into the same target are merged into one text (dictation arrives in several segments).
 const MAX_ACCUMULATED_PASTE_CHARS: usize = 8_000;
 
-/// Time of the latest content key-down anywhere (Enter and bare modifiers excluded). The hook
+/// Time of the latest content key-down or mouse click anywhere (Enter and bare modifiers excluded). The hook
 /// only stores it (cheap); the worker decides.
 static KEY_ACTIVITY_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -301,6 +303,11 @@ unsafe extern "system" fn ll_keyboard_proc(ncode: i32, wparam: WPARAM, lparam: L
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn ll_mouse_proc(ncode: i32, wparam: WPARAM, _lparam: LPARAM) -> LRESULT {
+    // A click can change the field without a key (spell-check pick, context-menu cut/paste):
+    // it makes any earlier snapshot stale, like a keystroke.
+    if ncode >= 0 && matches!(wparam.0 as u32, WM_LBUTTONUP_CODE | WM_RBUTTONUP_CODE) {
+        KEY_ACTIVITY_MS.store(now_ms(), Ordering::Relaxed);
+    }
     if ncode >= 0
         && is_repaste_gesture(
             wparam.0 as u32,

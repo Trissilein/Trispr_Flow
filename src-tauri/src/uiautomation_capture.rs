@@ -45,6 +45,9 @@ const SNAPSHOT_IDLE_MS: u64 = 400;
 /// Pastes into the same target are merged into one text (dictation arrives in several segments).
 const MAX_ACCUMULATED_PASTE_CHARS: usize = 8_000;
 
+/// Fields up to this many chars are read whole through TextPattern (see `read_element_text`).
+const SMALL_FIELD_CHARS: usize = 4_000;
+
 /// Time of the latest content key-down or mouse click anywhere (Enter and bare modifiers excluded). The hook
 /// only stores it (cheap); the worker decides.
 static KEY_ACTIVITY_MS: AtomicU64 = AtomicU64::new(0);
@@ -642,6 +645,16 @@ unsafe fn read_element_text(element: &IUIAutomationElement) -> Option<(String, &
 
     if let Ok(raw) = element.GetCurrentPattern(UIA_TextPatternId) {
         if let Ok(tp) = raw.cast::<IUIAutomationTextPattern>() {
+            // A chat-sized field is read whole, so a correction on an earlier line survives the
+            // caret sitting on the last one. Larger documents (code editors) keep the caret line.
+            if let Ok(doc) = tp.DocumentRange() {
+                if let Ok(bstr) = doc.GetText(SMALL_FIELD_CHARS as i32 + 1) {
+                    let s = bstr.to_string();
+                    if !s.is_empty() && s.chars().count() <= SMALL_FIELD_CHARS {
+                        return Some((s, "document"));
+                    }
+                }
+            }
             if let Ok(selection) = tp.GetSelection() {
                 if let Ok(count) = selection.Length() {
                     if count > 0 {

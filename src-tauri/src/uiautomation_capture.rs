@@ -53,13 +53,45 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Append a new paste to the text pasted before it into the same target. Every paste lands in
-/// the field again (a re-paste or a second "yes" included), so nothing is de-duplicated.
-fn merge_paste(prev: &str, text: &str) -> String {
-    if prev.chars().count() + text.chars().count() + 1 > MAX_ACCUMULATED_PASTE_CHARS {
-        return text.to_owned();
+/// Add a paste to the segments pasted before it into the same target. Every paste lands in the
+/// field again (a re-paste or a second "yes" included), so nothing is de-duplicated. The oldest
+/// segments go first once the total grows past the cap.
+fn push_segment(segments: &mut Vec<String>, text: &str) {
+    segments.push(text.to_owned());
+    let mut total: usize = segments.iter().map(|s| s.chars().count() + 1).sum();
+    while segments.len() > 1 && total > MAX_ACCUMULATED_PASTE_CHARS {
+        total -= segments.remove(0).chars().count() + 1;
     }
-    format!("{prev} {text}")
+}
+
+fn words_of(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// A segment still counts as "in the field" when at least half of its words are there. Edits
+/// keep most words; a segment that was already sent (Send button, no Enter) leaves the field.
+fn segment_in_field(segment: &str, field_words: &std::collections::HashSet<String>) -> bool {
+    let words = words_of(segment);
+    if words.is_empty() {
+        return true;
+    }
+    let found = words.iter().filter(|w| field_words.contains(*w)).count();
+    found * 2 >= words.len()
+}
+
+/// The baseline for the diff: the newest segments that are still in the field, oldest first.
+/// The newest segment is always kept. A mouse-sent message is never followed by an Enter, so its
+/// segments would otherwise poison the baseline of the next one.
+fn select_baseline(segments: &[String], field: &str) -> String {
+    let field_words: std::collections::HashSet<String> = words_of(field).into_iter().collect();
+    let mut start = segments.len().saturating_sub(1);
+    while start > 0 && segment_in_field(&segments[start - 1], &field_words) {
+        start -= 1;
+    }
+    segments[start..].join(" ")
 }
 
 #[derive(Clone, Copy)]
@@ -107,15 +139,16 @@ pub fn record_paste(state: &EnterCaptureState, text: &str) {
     let same_target = false;
 
     if let Ok(mut guard) = state.last_paste.lock() {
-        let merged = match guard.as_ref() {
+        let mut segments = match guard.take() {
             Some((prev, prev_ms))
-                if same_target && now_ms.saturating_sub(*prev_ms) <= CAPTURE_WINDOW_MS =>
+                if same_target && now_ms.saturating_sub(prev_ms) <= CAPTURE_WINDOW_MS =>
             {
-                merge_paste(prev, text)
+                prev
             }
-            _ => text.to_owned(),
+            _ => Vec::new(),
         };
-        *guard = Some((merged, now_ms));
+        push_segment(&mut segments, text);
+        *guard = Some((segments, now_ms));
     }
     #[cfg(target_os = "windows")]
     if let Ok(mut guard) = state.last_paste_target.lock() {
@@ -379,7 +412,7 @@ fn maybe_snapshot(app: &tauri::AppHandle, automation: &IUIAutomation2, handled_a
 fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
     let state = app.state::<crate::state::AppState>();
 
-    let (pasted, last_ms) = match state.enter_capture.last_paste.lock() {
+    let (segments, last_ms) = match state.enter_capture.last_paste.lock() {
         Ok(guard) => match guard.clone() {
             Some(tuple) => tuple,
             None => return, // no dictation pending: every Enter on the system lands here, stay quiet
@@ -389,8 +422,8 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
 
     if last_ms == 0 || now_ms().saturating_sub(last_ms) > CAPTURE_WINDOW_MS {
         info!(
-            "[enter-capture] outcome=expired pasted_chars={}",
-            pasted.chars().count()
+            "[enter-capture] outcome=expired segments={}",
+            segments.len()
         );
         consume_capture(&state.enter_capture);
         return;
@@ -428,8 +461,8 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
             Some(text) if !text.is_empty() => (text, "snapshot"),
             _ => {
                 info!(
-                    "[enter-capture] outcome=unreadable pasted_chars={}",
-                    pasted.chars().count()
+                    "[enter-capture] outcome=unreadable segments={}",
+                    segments.len()
                 );
                 consume_capture(&state.enter_capture);
                 return;
@@ -437,6 +470,7 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         },
     };
     consume_capture(&state.enter_capture);
+    let pasted = select_baseline(&segments, &current_text);
     if current_text == pasted {
         info!("[enter-capture] outcome=no_edit pattern={pattern_used}");
         return;
@@ -451,7 +485,8 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
     }
 
     info!(
-        "[enter-capture] outcome=emitted pattern={pattern_used} pasted_chars={} submitted_chars={}",
+        "[enter-capture] outcome=emitted pattern={pattern_used} segments={} pasted_chars={} submitted_chars={}",
+        segments.len(),
         pasted.chars().count(),
         current_text.chars().count()
     );
@@ -605,14 +640,39 @@ mod tests {
     }
 
     #[test]
-    fn pastes_into_one_target_are_merged_and_repeated_text_is_kept() {
+    fn segments_are_kept_even_when_repeated_and_capped_oldest_first() {
+        let mut segs = Vec::new();
+        push_segment(&mut segs, "Ja");
+        push_segment(&mut segs, "Ja");
+        assert_eq!(segs, vec!["Ja", "Ja"]);
+        push_segment(&mut segs, &"x".repeat(MAX_ACCUMULATED_PASTE_CHARS));
+        assert_eq!(segs.len(), 1);
+    }
+
+    #[test]
+    fn baseline_drops_segments_that_left_the_field() {
+        let segs = vec![
+            "Schau dir die WhatsApp Tickets an.".to_string(),
+            "Danach machen wir den Deploy fertig.".to_string(),
+        ];
+        // Both segments still in the field (one message, edited).
         assert_eq!(
-            merge_paste("Erster Teil.", "Zweiter Teil."),
-            "Erster Teil. Zweiter Teil."
+            select_baseline(
+                &segs,
+                "Schau dir die WhatsUp Tickets an. Danach machen wir den Deploy fertig."
+            ),
+            "Schau dir die WhatsApp Tickets an. Danach machen wir den Deploy fertig."
         );
-        assert_eq!(merge_paste("Ja", "Ja"), "Ja Ja");
-        let long = "x".repeat(MAX_ACCUMULATED_PASTE_CHARS);
-        assert_eq!(merge_paste(&long, "neu"), "neu");
+        // First segment was sent with the Send button: only the second is the baseline.
+        assert_eq!(
+            select_baseline(&segs, "Danach machen wir den Deploy fertig, bitte."),
+            "Danach machen wir den Deploy fertig."
+        );
+        // The newest segment is kept even when nothing matches.
+        assert_eq!(
+            select_baseline(&segs, "ganz anderer Text"),
+            "Danach machen wir den Deploy fertig."
+        );
     }
 
     #[test]

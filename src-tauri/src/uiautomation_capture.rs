@@ -74,24 +74,44 @@ fn words_of(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// A segment still counts as "in the field" when at least half of its words are there. Edits
-/// keep most words; a segment that was already sent (Send button, no Enter) leaves the field.
-fn segment_in_field(segment: &str, field_words: &std::collections::HashSet<String>) -> bool {
+/// Take the words of `segment` out of the field's word counts; returns how many were found.
+fn take_words(
+    segment: &str,
+    field_counts: &mut std::collections::HashMap<String, usize>,
+) -> (usize, usize) {
     let words = words_of(segment);
-    if words.is_empty() {
-        return true;
+    let mut found = 0;
+    for word in &words {
+        if let Some(count) = field_counts.get_mut(word) {
+            if *count > 0 {
+                *count -= 1;
+                found += 1;
+            }
+        }
     }
-    let found = words.iter().filter(|w| field_words.contains(*w)).count();
-    found * 2 >= words.len()
+    (found, words.len())
 }
 
 /// The baseline for the diff: the newest segments that are still in the field, oldest first.
-/// The newest segment is always kept. A mouse-sent message is never followed by an Enter, so its
-/// segments would otherwise poison the baseline of the next one.
+/// The newest segment is always kept and claims its words first; an older segment stays only if
+/// at least half of its words are still unclaimed in the field (edits keep most words, a segment
+/// already sent with the Send button, no Enter, leaves the field). Counting occurrences keeps a
+/// stale segment from borrowing the words of the live one.
 fn select_baseline(segments: &[String], field: &str) -> String {
-    let field_words: std::collections::HashSet<String> = words_of(field).into_iter().collect();
+    let mut field_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for word in words_of(field) {
+        *field_counts.entry(word).or_insert(0) += 1;
+    }
     let mut start = segments.len().saturating_sub(1);
-    while start > 0 && segment_in_field(&segments[start - 1], &field_words) {
+    if let Some(newest) = segments.get(start) {
+        take_words(newest, &mut field_counts);
+    }
+    while start > 0 {
+        let (found, total) = take_words(&segments[start - 1], &mut field_counts);
+        if total > 0 && found * 2 < total {
+            break;
+        }
         start -= 1;
     }
     segments[start..].join(" ")
@@ -699,6 +719,15 @@ mod tests {
         assert_eq!(
             select_baseline(&segs, "Danach machen wir den Deploy fertig, bitte."),
             "Danach machen wir den Deploy fertig."
+        );
+        // A stale segment must not borrow the words of the live one (WhatsApp -> WhatsUp case).
+        let stale = vec![
+            "open WhatsUp please".to_string(),
+            "open WhatsApp please".to_string(),
+        ];
+        assert_eq!(
+            select_baseline(&stale, "open WhatsUp please"),
+            "open WhatsApp please"
         );
         // The newest segment is kept even when nothing matches.
         assert_eq!(

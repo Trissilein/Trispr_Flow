@@ -359,7 +359,11 @@ fn run_worker_loop(
             }
 
             match signal_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                Ok(HookSignal::Enter) => handle_enter_signal(&app, &automation),
+                Ok(HookSignal::Enter) => {
+                    // The idle gate may have passed while we waited: take the due snapshot first.
+                    maybe_snapshot(&app, &automation, &mut snapshot_activity);
+                    handle_enter_signal(&app, &automation)
+                }
                 Ok(HookSignal::Repaste) => crate::repaste_last_text(&app),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,

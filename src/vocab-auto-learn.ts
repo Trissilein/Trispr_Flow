@@ -183,7 +183,10 @@ export function wordDiff(pasted: string, submitted: string): SubstitutionPair[] 
 
   const lcs = dp[m][n];
   const changed = m + n - 2 * lcs;
-  if (changed > (m + n) * 0.5) return [];
+  // A one-word dictation replaced by one word always looks like a rewrite;
+  // classifyCorrection's similarity gate decides whether the pair is a mishearing.
+  const singleWordSwap = m === 1 && n === 1;
+  if (!singleWordSwap && changed > (m + n) * 0.5) return [];
 
   // Backtrack to produce the edit script.
   type Op = { type: "equal" | "delete" | "insert"; token: string };

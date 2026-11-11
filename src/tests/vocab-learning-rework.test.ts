@@ -105,6 +105,16 @@ describe("wordDiff — compounds and broken characters", () => {
     ]);
   });
 
+  it("a one-word dictation corrected as a whole is still a pair", () => {
+    expect(wordDiff("WhatsApp", "WhatsUp")).toEqual([{ from: "WhatsApp", to: "WhatsUp" }]);
+  });
+
+  it("an unrelated one-word replacement is rejected by the similarity gate", () => {
+    ingestEditDelta("Morgen", "Dienstag");
+    ingestEditDelta("Morgen", "Dienstag");
+    expect(settings!.postproc_custom_vocab["Morgen"]).toBeUndefined();
+  });
+
   it("a typographic apostrophe swap is never a correction", () => {
     expect(classifyCorrection("Don't", "Don’t")).toBe("reject");
     expect(classifyCorrection("That's", "That’s")).toBe("reject");

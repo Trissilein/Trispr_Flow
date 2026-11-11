@@ -45,6 +45,8 @@ const SNAPSHOT_IDLE_MS: u64 = 400;
 /// Pastes into the same target are merged into one text (dictation arrives in several segments).
 const MAX_ACCUMULATED_PASTE_CHARS: usize = 8_000;
 
+/// Dictations of at most this many words skip the word-overlap gate of `select_baseline`.
+const SHORT_SEGMENT_WORDS: usize = 2;
 /// Fields up to this many chars are read whole through TextPattern (see `read_element_text`).
 const SMALL_FIELD_CHARS: usize = 4_000;
 
@@ -110,17 +112,37 @@ fn select_baseline(segments: &[String], field: &str) -> Option<String> {
     }
     let mut start = segments.len().checked_sub(1)?;
     let (found, total) = take_words(&segments[start], &mut field_counts);
-    if total > 0 && found * 2 < total {
+    // A short dictation corrected as a whole (WhatsApp -> WhatsUp) shares no word with the field;
+    // the learner's similarity gate judges those. The overlap gate is for longer segments.
+    if total > SHORT_SEGMENT_WORDS && found * 2 < total && !field.contains(segments[start].as_str())
+    {
         return None;
     }
     while start > 0 {
-        let (found, total) = take_words(&segments[start - 1], &mut field_counts);
-        if total > 0 && found * 2 < total {
+        let older = &segments[start - 1];
+        let (found, total) = take_words(older, &mut field_counts);
+        // A short segment glued to its neighbour (`hello` + `world` = `helloworld`) shares no
+        // word with the field but is still literally there.
+        let glued = total <= SHORT_SEGMENT_WORDS && field.contains(older.as_str());
+        if total > 0 && found * 2 < total && !glued {
             break;
         }
         start -= 1;
     }
-    Some(segments[start..].join(" "))
+    Some(join_segments(&segments[start..], field))
+}
+
+/// Join segments the way they sit in the field: pasted back to back they are glued together
+/// (`hello` + `world` = `helloworld`), so a space is only added where the field shows one.
+fn join_segments(segments: &[String], field: &str) -> String {
+    let mut out = String::new();
+    for (idx, segment) in segments.iter().enumerate() {
+        if idx > 0 && !field.contains(&format!("{}{}", segments[idx - 1], segment)) {
+            out.push(' ');
+        }
+        out.push_str(segment);
+    }
+    out
 }
 
 #[derive(Clone, Copy)]
@@ -753,6 +775,26 @@ mod tests {
         assert_eq!(
             baseline(&stale, "open WhatsUp please").as_deref(),
             Some("open WhatsApp please")
+        );
+    }
+
+    #[test]
+    fn short_dictations_and_glued_segments_are_handled() {
+        // One word corrected as a whole: no shared word, still a baseline.
+        let one = vec!["WhatsApp".to_string()];
+        assert_eq!(
+            select_baseline(&one, "WhatsUp").as_deref(),
+            Some("WhatsApp")
+        );
+        // Back-to-back pastes stay glued where the field shows no separator.
+        let two = vec!["hello".to_string(), "world".to_string()];
+        assert_eq!(
+            select_baseline(&two, "helloworld").as_deref(),
+            Some("helloworld")
+        );
+        assert_eq!(
+            select_baseline(&two, "hello world").as_deref(),
+            Some("hello world")
         );
     }
 

@@ -92,20 +92,23 @@ fn take_words(
     (found, words.len())
 }
 
-/// The baseline for the diff: the newest segments that are still in the field, oldest first.
-/// The newest segment is always kept and claims its words first; an older segment stays only if
+/// The baseline for the diff: the newest segments that are still in the field, oldest first, or
+/// `None` when even the newest segment is gone (message sent with the mouse, the field now holds
+/// something unrelated: nothing to learn from).
+/// The newest segment claims its words first; an older segment stays only if
 /// at least half of its words are still unclaimed in the field (edits keep most words, a segment
 /// already sent with the Send button, no Enter, leaves the field). Counting occurrences keeps a
 /// stale segment from borrowing the words of the live one.
-fn select_baseline(segments: &[String], field: &str) -> String {
+fn select_baseline(segments: &[String], field: &str) -> Option<String> {
     let mut field_counts: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
     for word in words_of(field) {
         *field_counts.entry(word).or_insert(0) += 1;
     }
-    let mut start = segments.len().saturating_sub(1);
-    if let Some(newest) = segments.get(start) {
-        take_words(newest, &mut field_counts);
+    let mut start = segments.len().checked_sub(1)?;
+    let (found, total) = take_words(&segments[start], &mut field_counts);
+    if total > 0 && found * 2 < total {
+        return None;
     }
     while start > 0 {
         let (found, total) = take_words(&segments[start - 1], &mut field_counts);
@@ -114,7 +117,7 @@ fn select_baseline(segments: &[String], field: &str) -> String {
         }
         start -= 1;
     }
-    segments[start..].join(" ")
+    Some(segments[start..].join(" "))
 }
 
 #[derive(Clone, Copy)]
@@ -522,7 +525,13 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         },
     };
     consume_capture(&state.enter_capture);
-    let pasted = select_baseline(&segments, &current_text);
+    let Some(pasted) = select_baseline(&segments, &current_text) else {
+        info!(
+            "[enter-capture] outcome=unrelated segments={} pattern={pattern_used}",
+            segments.len()
+        );
+        return;
+    };
     if current_text == pasted {
         info!("[enter-capture] outcome=no_edit pattern={pattern_used}");
         return;
@@ -707,18 +716,20 @@ mod tests {
             "Schau dir die WhatsApp Tickets an.".to_string(),
             "Danach machen wir den Deploy fertig.".to_string(),
         ];
+        let baseline = |segs: &[String], field: &str| select_baseline(segs, field);
         // Both segments still in the field (one message, edited).
         assert_eq!(
-            select_baseline(
+            baseline(
                 &segs,
                 "Schau dir die WhatsUp Tickets an. Danach machen wir den Deploy fertig."
-            ),
-            "Schau dir die WhatsApp Tickets an. Danach machen wir den Deploy fertig."
+            )
+            .as_deref(),
+            Some("Schau dir die WhatsApp Tickets an. Danach machen wir den Deploy fertig.")
         );
         // First segment was sent with the Send button: only the second is the baseline.
         assert_eq!(
-            select_baseline(&segs, "Danach machen wir den Deploy fertig, bitte."),
-            "Danach machen wir den Deploy fertig."
+            baseline(&segs, "Danach machen wir den Deploy fertig, bitte.").as_deref(),
+            Some("Danach machen wir den Deploy fertig.")
         );
         // A stale segment must not borrow the words of the live one (WhatsApp -> WhatsUp case).
         let stale = vec![
@@ -726,14 +737,17 @@ mod tests {
             "open WhatsApp please".to_string(),
         ];
         assert_eq!(
-            select_baseline(&stale, "open WhatsUp please"),
-            "open WhatsApp please"
+            baseline(&stale, "open WhatsUp please").as_deref(),
+            Some("open WhatsApp please")
         );
-        // The newest segment is kept even when nothing matches.
-        assert_eq!(
-            select_baseline(&segs, "ganz anderer Text"),
-            "Danach machen wir den Deploy fertig."
-        );
+    }
+
+    #[test]
+    fn baseline_is_none_when_the_newest_segment_is_gone() {
+        let one = vec!["Danach machen wir den Deploy fertig.".to_string()];
+        // Sent with the mouse, the field now holds an unrelated message.
+        assert_eq!(select_baseline(&one, "ganz anderer Text"), None);
+        assert_eq!(select_baseline(&[], "egal"), None);
     }
 
     #[test]

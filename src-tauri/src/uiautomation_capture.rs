@@ -43,7 +43,8 @@ const SNAPSHOT_IDLE_MS: u64 = 400;
 /// Pastes into the same target are merged into one text (dictation arrives in several segments).
 const MAX_ACCUMULATED_PASTE_CHARS: usize = 8_000;
 
-/// Time of the latest key-down anywhere. The hook only stores it (cheap); the worker decides.
+/// Time of the latest content key-down anywhere (Enter and bare modifiers excluded). The hook
+/// only stores it (cheap); the worker decides.
 static KEY_ACTIVITY_MS: AtomicU64 = AtomicU64::new(0);
 
 fn now_ms() -> u64 {
@@ -266,7 +267,21 @@ unsafe extern "system" fn ll_keyboard_proc(ncode: i32, wparam: WPARAM, lparam: L
                 _ => {}
             }
         }
-        if is_down {
+        if message == WM_KEYDOWN_CODE
+            && !matches!(
+                kbd.vkCode,
+                VK_RETURN_CODE
+                    | VK_SHIFT_CODE
+                    | VK_LSHIFT_CODE
+                    | VK_RSHIFT_CODE
+                    | VK_CONTROL_CODE
+                    | VK_LCONTROL_CODE
+                    | VK_RCONTROL_CODE
+                    | VK_MENU_CODE
+                    | VK_LMENU_CODE
+                    | VK_RMENU_CODE
+            )
+        {
             KEY_ACTIVITY_MS.store(now_ms(), Ordering::Relaxed);
         }
         // Shift+Enter is a line break in chat inputs, not "send": it must not consume the capture.
@@ -402,7 +417,8 @@ fn maybe_snapshot(app: &tauri::AppHandle, automation: &IUIAutomation2, handled_a
     if let Some((text, _)) = unsafe { read_focused_value(automation) } {
         if !text.is_empty() {
             if let Ok(mut guard) = state.enter_capture.last_snapshot.lock() {
-                *guard = Some(cap_submitted(text));
+                // Tagged with the keystroke it follows: a later keystroke makes it stale.
+                *guard = Some((cap_submitted(text), activity));
             }
         }
     }
@@ -447,12 +463,17 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         return;
     }
 
+    // A snapshot is only valid if no content key was pressed after it was taken; otherwise a
+    // final edit (or a reverted one) would be missed and the old text learned.
+    let latest_activity = KEY_ACTIVITY_MS.load(Ordering::Relaxed);
     let snapshot = state
         .enter_capture
         .last_snapshot
         .lock()
         .ok()
-        .and_then(|g| g.clone());
+        .and_then(|g| g.clone())
+        .filter(|(_, activity)| *activity >= latest_activity)
+        .map(|(text, _)| text);
     // Live read wins. The snapshot only stands in when the app has already emptied (or hidden)
     // its input by the time we read it.
     let (current_text, pattern_used) = match unsafe { read_focused_value(automation) } {

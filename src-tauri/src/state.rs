@@ -674,7 +674,7 @@ pub struct EnterCaptureState {
     pub last_paste_target: std::sync::Mutex<Option<TargetIdentity>>,
     /// Latest field text read after a typing pause while a paste is live. Fallback for the
     /// moment the target app has already cleared its input by the time Enter is processed.
-    pub last_snapshot: std::sync::Mutex<Option<String>>,
+    pub last_snapshot: std::sync::Mutex<Option<(String, u64)>>,
     /// Shutdown signal sender. Dropping this lets the worker thread exit cleanly.
     pub shutdown_tx: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
     /// Hook-thread ID for PostThreadMessageW(WM_QUIT) on exit. 0 = not set.

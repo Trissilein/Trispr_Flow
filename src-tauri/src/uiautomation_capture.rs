@@ -292,7 +292,8 @@ unsafe extern "system" fn ll_keyboard_proc(ncode: i32, wparam: WPARAM, lparam: L
                 _ => {}
             }
         }
-        if message == WM_KEYDOWN_CODE
+        // is_down covers WM_SYSKEYDOWN too: AltGr/Alt-held characters arrive that way.
+        if is_down
             && !matches!(
                 kbd.vkCode,
                 VK_RETURN_CODE

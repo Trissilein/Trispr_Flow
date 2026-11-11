@@ -53,12 +53,9 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Append a new paste to the text pasted before it into the same target. A repeated paste of the
-/// same text (re-paste gesture) does not duplicate it.
+/// Append a new paste to the text pasted before it into the same target. Every paste lands in
+/// the field again (a re-paste or a second "yes" included), so nothing is de-duplicated.
 fn merge_paste(prev: &str, text: &str) -> String {
-    if prev.ends_with(text) {
-        return prev.to_owned();
-    }
     if prev.chars().count() + text.chars().count() + 1 > MAX_ACCUMULATED_PASTE_CHARS {
         return text.to_owned();
     }
@@ -351,7 +348,9 @@ fn maybe_snapshot(app: &tauri::AppHandle, automation: &IUIAutomation2, handled_a
 
     let state = app.state::<crate::state::AppState>();
     let live = match state.enter_capture.last_paste.lock() {
-        Ok(guard) => matches!(&*guard, Some((_, ms)) if now.saturating_sub(*ms) <= CAPTURE_WINDOW_MS),
+        Ok(guard) => {
+            matches!(&*guard, Some((_, ms)) if now.saturating_sub(*ms) <= CAPTURE_WINDOW_MS)
+        }
         Err(_) => false,
     };
     if !live {
@@ -389,7 +388,10 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
     };
 
     if last_ms == 0 || now_ms().saturating_sub(last_ms) > CAPTURE_WINDOW_MS {
-        info!("[enter-capture] outcome=expired pasted_chars={}", pasted.chars().count());
+        info!(
+            "[enter-capture] outcome=expired pasted_chars={}",
+            pasted.chars().count()
+        );
         consume_capture(&state.enter_capture);
         return;
     }
@@ -425,7 +427,10 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         _ => match snapshot {
             Some(text) if !text.is_empty() => (text, "snapshot"),
             _ => {
-                info!("[enter-capture] outcome=unreadable pasted_chars={}", pasted.chars().count());
+                info!(
+                    "[enter-capture] outcome=unreadable pasted_chars={}",
+                    pasted.chars().count()
+                );
                 consume_capture(&state.enter_capture);
                 return;
             }
@@ -490,6 +495,10 @@ fn cap_submitted(text: String) -> String {
 #[cfg(target_os = "windows")]
 unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<(String, &'static str)> {
     let focused = automation.GetFocusedElement().ok()?;
+    // Password fields are never read, and never replaced by a container above them either.
+    if is_password_element(&focused) {
+        return None;
+    }
     if let Some(found) = read_element_text(&focused) {
         return Some(found);
     }
@@ -499,6 +508,9 @@ unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<(String, &'s
     let mut current = focused;
     for _ in 0..3 {
         current = walker.GetParentElement(&current).ok()?;
+        if is_password_element(&current) {
+            return None;
+        }
         if let Some(found) = read_element_text(&current) {
             return Some(found);
         }
@@ -507,12 +519,16 @@ unsafe fn read_focused_value(automation: &IUIAutomation2) -> Option<(String, &'s
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn read_element_text(element: &IUIAutomationElement) -> Option<(String, &'static str)> {
-    if element
+unsafe fn is_password_element(element: &IUIAutomationElement) -> bool {
+    element
         .CurrentIsPassword()
         .map(|is_password| is_password.as_bool())
         .unwrap_or(false)
-    {
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn read_element_text(element: &IUIAutomationElement) -> Option<(String, &'static str)> {
+    if is_password_element(element) {
         return None;
     }
 
@@ -589,9 +605,12 @@ mod tests {
     }
 
     #[test]
-    fn pastes_into_one_target_are_merged_without_duplicating_a_repaste() {
-        assert_eq!(merge_paste("Erster Teil.", "Zweiter Teil."), "Erster Teil. Zweiter Teil.");
-        assert_eq!(merge_paste("Erster. Zweiter.", "Zweiter."), "Erster. Zweiter.");
+    fn pastes_into_one_target_are_merged_and_repeated_text_is_kept() {
+        assert_eq!(
+            merge_paste("Erster Teil.", "Zweiter Teil."),
+            "Erster Teil. Zweiter Teil."
+        );
+        assert_eq!(merge_paste("Ja", "Ja"), "Ja Ja");
         let long = "x".repeat(MAX_ACCUMULATED_PASTE_CHARS);
         assert_eq!(merge_paste(&long, "neu"), "neu");
     }

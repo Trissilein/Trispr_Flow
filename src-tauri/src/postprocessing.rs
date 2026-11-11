@@ -827,7 +827,10 @@ mod tests {
         settings.postproc_custom_vocab = vocab(&[("WhatsApp", "WhatsUp")]);
         settings.postproc_custom_vocab_enabled = true;
         assert_eq!(
-            apply_custom_vocab_rules("Schau dir die WhatsApp-Tickets an, WhatsApp's Liste.", &settings),
+            apply_custom_vocab_rules(
+                "Schau dir die WhatsApp-Tickets an, WhatsApp's Liste.",
+                &settings
+            ),
             "Schau dir die WhatsUp-Tickets an, WhatsUp's Liste."
         );
     }

@@ -192,14 +192,35 @@ describe("ingestEditDelta — similarity gate", () => {
     expect(settings!.edit_substitutions ?? []).toHaveLength(0);
   });
 
-  it("a loose (hint-level) correction is learned as term + pair but gets no find-replace rule", () => {
+  it("a confirmed loose (hint-level) correction also becomes a rule that runs before the LLM", () => {
     for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
-      ingestEditDelta("Ich nutze Kloud heute.", "Ich nutze Claude heute.");
+      ingestEditDelta("Ich arbeite am Vauravox Addon.", "Ich arbeite am Wowravox Addon.");
     }
     const subs = settings!.edit_substitutions ?? [];
-    expect(subs[0]).toMatchObject({ from: "Kloud", to: "Claude", promoted: true });
-    expect(settings!.vocab_terms).toContain("Claude");
+    expect(subs[0]).toMatchObject({ from: "Vauravox", to: "Wowravox", promoted: true });
+    expect(settings!.vocab_terms).toContain("Wowravox");
+    expect(settings!.postproc_custom_vocab).toEqual({ Vauravox: "Wowravox" });
+  });
+
+  it("a confirmed short hint-level word stays a hint (Zug -> Zeug)", () => {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      ingestEditDelta("Das Zug liegt hier.", "Das Zeug liegt hier.");
+    }
+    expect(settings!.vocab_terms).toContain("Zeug");
     expect(settings!.postproc_custom_vocab).toEqual({});
+  });
+
+  it("inflection edits are never counted (Build -> Builds, perfects -> perfect)", () => {
+    for (let i = 0; i < 3; i++) {
+      ingestEditDelta("The Build is green today.", "The Builds is green today.");
+      ingestEditDelta("It perfects the flow now.", "It perfect the flow now.");
+    }
+    expect(settings!.edit_substitutions ?? []).toHaveLength(0);
+    expect(settings!.postproc_custom_vocab).toEqual({});
+  });
+
+  it("an extra t is a mishearing, not an inflection (Godo -> Godot)", () => {
+    expect(classifyCorrection("Godo", "Godot")).not.toBe("reject");
   });
 
   it("a casing-only correction is learned as term + pair but gets no find-replace rule", () => {

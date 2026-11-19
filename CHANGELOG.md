@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Vocabulary learning order**: a correction confirmed in 2 separate edits now becomes a find-replace rule that runs BEFORE the AI refinement even when it is only a loose match (`Vauravox` -> `Wowravox`; words under 5 letters and casing-only edits stay hints). After the refinement the rules run once more, limited to special forms (CamelCase, digits, several words, hyphen/dot, or a learned pair), so the AI cannot undo a correction while ordinary-word rules like `cloud` -> `Claude` never touch the refined text. The "Known corrections" list now goes in front of the refinement prompt instead of after it (gemma4:e2b ignored it at the end). Inflection edits (`Build` -> `Builds`, `perfects` -> `perfect`) are no longer learned.
+
 ### Fixed
 
 - **Vocabulary learning**: a corrected hyphenated compound (`WhatsApp-Tickets` -> `WhatsUp-Tickets`) now teaches the changed part (`WhatsApp` -> `WhatsUp`) and counts together with the bare word instead of stalling as a one-off pair. A typography swap by the target app (`Don't` -> `Don’t`) is no longer learned as a rule.

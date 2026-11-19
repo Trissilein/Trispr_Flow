@@ -328,8 +328,20 @@ function normalizeTypography(text: string): string {
     .replace(/[‐‑‒–—]/g, "-");
 }
 
+/** Common German/English inflection endings (plural, verb forms). `t` is left out: Godo -> Godot. */
+const INFLECTION_SUFFIXES = new Set(["s", "es", "e", "en", "n", "er", "ern", "ed", "d", "ing", "ung", "st"]);
+
+/** Build -> Builds, perfects -> perfect: a grammar edit, never a mishearing. */
+function isInflection(from: string, to: string): boolean {
+  const a = from.toLowerCase();
+  const b = to.toLowerCase();
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= 3 && long.startsWith(short) && INFLECTION_SUFFIXES.has(long.slice(short.length));
+}
+
 export function classifyCorrection(from: string, to: string): CorrectionKind {
   if (isAllFunctionWords(from) || isAllFunctionWords(to)) return "reject";
+  if (isInflection(from, to)) return "reject";
   // Don't -> Don’t is a typography swap by the app, not a mishearing: never learn it.
   if (from !== to && normalizeTypography(from) === normalizeTypography(to)) return "reject";
 
@@ -356,6 +368,20 @@ export function classifyCorrection(from: string, to: string): CorrectionKind {
  * those are not ordinary words. A plain capitalized `from` (Code, Gamma) may
  * be a common word whose lowercase form must keep working.
  */
+/**
+ * A learned pair (seen in 2 separate edits) becomes a find-replace rule that runs BEFORE the
+ * refinement, so the LLM already gets the right term. `hint` pairs qualify too once confirmed
+ * (Vauravox -> Wowravox, 0.375): the LLM ignores correction lists. Short words stay hints
+ * (Zug -> Zeug), casing-only pairs too (a rule would recase every common word).
+ */
+function becomesRule(from: string, to: string): boolean {
+  const kind = classifyCorrection(from, to);
+  if (kind === "rule") return true;
+  if (kind !== "hint") return false;
+  const length = Math.max(Array.from(foldForCompare(from)).length, Array.from(foldForCompare(to)).length);
+  return length >= RULE_MIN_LENGTH;
+}
+
 function needsLowercaseRule(from: string): boolean {
   return from !== from.toLowerCase() && /[\p{Lu}\p{N}]/u.test(from.slice(1));
 }
@@ -482,7 +508,7 @@ function applyPromotions(pairs: Array<[string, string]>, enableRules: boolean): 
   const hasRule = (key: string) => Object.prototype.hasOwnProperty.call(vocab, key);
 
   for (const [from, to] of pairs) {
-    if (classifyCorrection(from, to) === "rule") {
+    if (becomesRule(from, to)) {
       // A rule that already maps this word elsewhere belongs to the user: keep it.
       if (!hasRule(from)) vocab[from] = to;
       const lowered = from.toLowerCase();

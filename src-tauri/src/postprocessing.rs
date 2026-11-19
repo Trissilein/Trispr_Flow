@@ -343,6 +343,41 @@ pub(crate) fn apply_custom_vocab_rules(text: &str, settings: &Settings) -> Strin
     }
 }
 
+/// Second pass over the refined text: the LLM may re-mangle a term the first pass fixed, or keep
+/// a heard form. Only rules whose key is a special form run here (CamelCase, digits, several
+/// words, hyphen/dot, or the `from` of a learned pair): the refinement may translate, and a rule
+/// keyed on an ordinary word (`cloud -> Claude`) would break real words in the output.
+pub(crate) fn apply_post_refinement_rules(text: &str, settings: &Settings) -> String {
+    if !settings.postproc_custom_vocab_enabled || settings.postproc_custom_vocab.is_empty() {
+        return text.to_string();
+    }
+    let learned: std::collections::HashSet<String> = settings
+        .edit_substitutions
+        .iter()
+        .filter(|sub| sub.promoted)
+        .map(|sub| sub.from.to_lowercase())
+        .collect();
+    let special: HashMap<String, String> = settings
+        .postproc_custom_vocab
+        .iter()
+        .filter(|(from, _)| is_special_rule_key(from, &learned))
+        .map(|(from, to)| (from.clone(), to.clone()))
+        .collect();
+    apply_custom_vocabulary(text, &special)
+}
+
+fn is_special_rule_key(key: &str, learned: &std::collections::HashSet<String>) -> bool {
+    learned.contains(&key.to_lowercase())
+        || key
+            .chars()
+            .skip(1)
+            .any(|c| c.is_uppercase() || c.is_numeric())
+        || key.starts_with(|c: char| c.is_numeric())
+        || key
+            .chars()
+            .any(|c| c.is_whitespace() || c == '-' || c == '.')
+}
+
 /// Longest rule key accepted (chars). Longer keys are not word/phrase corrections and would only
 /// bloat the combined regex.
 const MAX_RULE_KEY_CHARS: usize = 128;
@@ -832,6 +867,40 @@ mod tests {
                 &settings
             ),
             "Schau dir die WhatsUp-Tickets an, WhatsUp's Liste."
+        );
+    }
+
+    #[test]
+    fn post_refinement_pass_runs_special_and_learned_rules_but_not_plain_words() {
+        let mut settings = Settings::default();
+        settings.postproc_custom_vocab = vocab(&[
+            ("Vauravox", "Wowravox"),
+            ("WhatsApp", "WhatsUp"),
+            ("Trispa Flow", "Trispr-Flow"),
+            ("3js", "three.js"),
+            ("cloud", "Claude"),
+            ("Cloud", "Claude"),
+        ]);
+        settings.edit_substitutions = vec![crate::state::EditSubstitution {
+            from: "Vauravox".to_string(),
+            to: "Wowravox".to_string(),
+            count: 2,
+            first_seen_ms: 1,
+            last_seen_ms: 2,
+            promoted: true,
+        }];
+        settings.postproc_custom_vocab_enabled = true;
+        assert_eq!(
+            apply_post_refinement_rules(
+                "Cloud sync for the Vauravox addon via WhatsApp, Trispa Flow and 3js in the cloud.",
+                &settings
+            ),
+            "Cloud sync for the Wowravox addon via WhatsUp, Trispr-Flow and three.js in the cloud."
+        );
+        settings.postproc_custom_vocab_enabled = false;
+        assert_eq!(
+            apply_post_refinement_rules("Vauravox", &settings),
+            "Vauravox"
         );
     }
 }

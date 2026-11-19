@@ -2004,7 +2004,11 @@ pub(crate) fn maybe_spawn_ai_refinement(
             }
 
             match refinement_result {
-                Ok(result) => {
+                Ok(mut result) => {
+                    result.text = crate::postprocessing::apply_post_refinement_rules(
+                        &result.text,
+                        &settings_snapshot,
+                    );
                     if diagnostics_enabled {
                         info!(
                             "[refinement:{}] inference finished trigger={} source={} provider={} model={} elapsed_ms={} input_bytes={} output_bytes={} tokens_in={} tokens_out={}",

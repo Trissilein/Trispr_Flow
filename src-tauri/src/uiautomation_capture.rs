@@ -45,6 +45,9 @@ const SNAPSHOT_IDLE_MS: u64 = 400;
 /// Pastes into the same target are merged into one text (dictation arrives in several segments).
 const MAX_ACCUMULATED_PASTE_CHARS: usize = 8_000;
 
+/// A short dictation (see `SHORT_SEGMENT_WORDS`) carries no word-overlap evidence that it is still
+/// in the field, so it only counts for a short while: long enough to fix it and press Enter.
+const SHORT_CAPTURE_WINDOW_MS: u64 = 2 * 60 * 1000;
 /// Dictations of at most this many words skip the word-overlap gate of `select_baseline`.
 const SHORT_SEGMENT_WORDS: usize = 2;
 /// Fields up to this many chars are read whole through TextPattern (see `read_element_text`).
@@ -551,7 +554,12 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         },
     };
     consume_capture(&state.enter_capture);
-    let Some(pasted) = select_baseline(&segments, &current_text) else {
+    let short_and_old = |pasted: &str| {
+        words_of(pasted).len() <= SHORT_SEGMENT_WORDS
+            && now_ms().saturating_sub(last_ms) > SHORT_CAPTURE_WINDOW_MS
+    };
+    let Some(pasted) = select_baseline(&segments, &current_text).filter(|p| !short_and_old(p))
+    else {
         info!(
             "[enter-capture] outcome=unrelated segments={} pattern={pattern_used}",
             segments.len()

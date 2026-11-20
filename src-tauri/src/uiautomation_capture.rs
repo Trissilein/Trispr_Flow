@@ -537,31 +537,37 @@ fn handle_enter_signal(app: &tauri::AppHandle, automation: &IUIAutomation2) {
         .and_then(|g| g.clone())
         .filter(|(_, activity)| *activity >= latest_activity)
         .map(|(text, _)| text);
-    // Live read wins. The snapshot only stands in when the app has already emptied (or hidden)
-    // its input by the time we read it.
-    let (current_text, pattern_used) = match unsafe { read_focused_value(automation) } {
-        Some((text, pattern)) if !text.is_empty() => (text, pattern),
-        _ => match snapshot {
-            Some(text) if !text.is_empty() => (text, "snapshot"),
-            _ => {
-                info!(
-                    "[enter-capture] outcome=unreadable segments={}",
-                    segments.len()
-                );
-                consume_capture(&state.enter_capture);
-                return;
-            }
-        },
-    };
+    // Candidates in order: the live read, then the snapshot. The snapshot stands in when the app
+    // has already emptied its input, or when submitting moved focus to an unrelated control (the
+    // live text then shares nothing with the dictation).
+    let mut candidates: Vec<(String, &'static str)> = Vec::new();
+    if let Some((text, pattern)) = unsafe { read_focused_value(automation) } {
+        if !text.is_empty() {
+            candidates.push((text, pattern));
+        }
+    }
+    if let Some(text) = snapshot.filter(|t| !t.is_empty()) {
+        candidates.push((text, "snapshot"));
+    }
     consume_capture(&state.enter_capture);
+    if candidates.is_empty() {
+        info!(
+            "[enter-capture] outcome=unreadable segments={}",
+            segments.len()
+        );
+        return;
+    }
     let short_and_old = |pasted: &str| {
         words_of(pasted).len() <= SHORT_SEGMENT_WORDS
             && now_ms().saturating_sub(last_ms) > SHORT_CAPTURE_WINDOW_MS
     };
-    let Some(pasted) = select_baseline(&segments, &current_text).filter(|p| !short_and_old(p))
-    else {
+    let Some(((current_text, pattern_used), pasted)) = candidates.into_iter().find_map(|c| {
+        select_baseline(&segments, &c.0)
+            .filter(|p| !short_and_old(p))
+            .map(|p| (c, p))
+    }) else {
         info!(
-            "[enter-capture] outcome=unrelated segments={} pattern={pattern_used}",
+            "[enter-capture] outcome=unrelated segments={}",
             segments.len()
         );
         return;

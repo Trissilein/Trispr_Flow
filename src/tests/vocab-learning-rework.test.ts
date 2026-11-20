@@ -85,6 +85,46 @@ describe("wordDiff — phrase pairs", () => {
   });
 });
 
+describe("wordDiff — compounds and broken characters", () => {
+  it("a hyphenated compound teaches the changed part only", () => {
+    expect(
+      wordDiff("Schau dir die WhatsApp-Tickets an.", "Schau dir die WhatsUp-Tickets an."),
+    ).toEqual([{ from: "WhatsApp", to: "WhatsUp" }]);
+  });
+
+  it("compound and bare word share one counter and promote together", () => {
+    ingestEditDelta("Schau dir die WhatsApp-Tickets an.", "Schau dir die WhatsUp-Tickets an.");
+    ingestEditDelta("Öffne WhatsApp bitte.", "Öffne WhatsUp bitte.");
+    expect(settings!.postproc_custom_vocab["WhatsApp"]).toBe("WhatsUp");
+    expect(settings!.vocab_terms).toContain("WhatsUp");
+  });
+
+  it("compounds with different part counts stay one pair", () => {
+    expect(wordDiff("Das ist Kick-off Plan", "Das ist Kickoff Plan")).toEqual([
+      { from: "Kick-off", to: "Kickoff" },
+    ]);
+  });
+
+  it("a one-word dictation corrected as a whole is still a pair", () => {
+    expect(wordDiff("WhatsApp", "WhatsUp")).toEqual([{ from: "WhatsApp", to: "WhatsUp" }]);
+  });
+
+  it("an unrelated one-word replacement is rejected by the similarity gate", () => {
+    ingestEditDelta("Morgen", "Dienstag");
+    ingestEditDelta("Morgen", "Dienstag");
+    expect(settings!.postproc_custom_vocab["Morgen"]).toBeUndefined();
+  });
+
+  it("a typographic apostrophe swap is never a correction", () => {
+    expect(classifyCorrection("Don't", "Don’t")).toBe("reject");
+    expect(classifyCorrection("That's", "That’s")).toBe("reject");
+    ingestEditDelta("Don't stop now please", "Don’t stop now please");
+    ingestEditDelta("Don't stop now please", "Don’t stop now please");
+    expect(settings!.postproc_custom_vocab["Don't"]).toBeUndefined();
+    expect(settings!.edit_substitutions).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Similarity gate
 // ---------------------------------------------------------------------------
@@ -152,14 +192,35 @@ describe("ingestEditDelta — similarity gate", () => {
     expect(settings!.edit_substitutions ?? []).toHaveLength(0);
   });
 
-  it("a loose (hint-level) correction is learned as term + pair but gets no find-replace rule", () => {
+  it("a confirmed loose (hint-level) correction also becomes a rule that runs before the LLM", () => {
     for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
-      ingestEditDelta("Ich nutze Kloud heute.", "Ich nutze Claude heute.");
+      ingestEditDelta("Ich arbeite am Vauravox Addon.", "Ich arbeite am Wowravox Addon.");
     }
     const subs = settings!.edit_substitutions ?? [];
-    expect(subs[0]).toMatchObject({ from: "Kloud", to: "Claude", promoted: true });
-    expect(settings!.vocab_terms).toContain("Claude");
+    expect(subs[0]).toMatchObject({ from: "Vauravox", to: "Wowravox", promoted: true });
+    expect(settings!.vocab_terms).toContain("Wowravox");
+    expect(settings!.postproc_custom_vocab).toEqual({ Vauravox: "Wowravox" });
+  });
+
+  it("a confirmed short hint-level word stays a hint (Zug -> Zeug)", () => {
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      ingestEditDelta("Das Zug liegt hier.", "Das Zeug liegt hier.");
+    }
+    expect(settings!.vocab_terms).toContain("Zeug");
     expect(settings!.postproc_custom_vocab).toEqual({});
+  });
+
+  it("inflection edits are never counted (Build -> Builds, perfects -> perfect)", () => {
+    for (let i = 0; i < 3; i++) {
+      ingestEditDelta("The Build is green today.", "The Builds is green today.");
+      ingestEditDelta("It perfects the flow now.", "It perfect the flow now.");
+    }
+    expect(settings!.edit_substitutions ?? []).toHaveLength(0);
+    expect(settings!.postproc_custom_vocab).toEqual({});
+  });
+
+  it("an extra t is a mishearing, not an inflection (Godo -> Godot)", () => {
+    expect(classifyCorrection("Godo", "Godot")).not.toBe("reject");
   });
 
   it("a casing-only correction is learned as term + pair but gets no find-replace rule", () => {

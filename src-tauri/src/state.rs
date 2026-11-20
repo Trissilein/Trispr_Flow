@@ -667,10 +667,14 @@ pub struct TargetIdentity {
 
 #[derive(Default)]
 pub struct EnterCaptureState {
-    /// Text + timestamp together: prevents a race between Load and Lock.
-    pub last_paste: std::sync::Mutex<Option<(String, u64)>>,
+    /// Pasted segments (oldest first) + time of the latest one, together: prevents a race between
+    /// Load and Lock.
+    pub last_paste: std::sync::Mutex<Option<(Vec<String>, u64)>>,
     /// Foreground window/process at paste time. Cleared on Enter-mismatch.
     pub last_paste_target: std::sync::Mutex<Option<TargetIdentity>>,
+    /// Latest field text read after a typing pause while a paste is live. Fallback for the
+    /// moment the target app has already cleared its input by the time Enter is processed.
+    pub last_snapshot: std::sync::Mutex<Option<(String, u64)>>,
     /// Shutdown signal sender. Dropping this lets the worker thread exit cleanly.
     pub shutdown_tx: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
     /// Hook-thread ID for PostThreadMessageW(WM_QUIT) on exit. 0 = not set.

@@ -1400,6 +1400,9 @@ fn handle_transcription_ok(
         gate.should_refine,
     );
     let ollama_cold = refinement_enabled && !model_loaded;
+    // /api/ps is the source of truth: a stale "last success" (app restart, idle) is not a
+    // cold start while the model is loaded, so the refined text gets pasted, not the raw one.
+    let paste_timeout_cold = cold_start_pastes_raw(paste_timeout_cold, model_loaded);
 
     // Cold start inverts the deferral: paste raw immediately and let the
     // refinement warm the model in the background (history-only result).
@@ -1523,6 +1526,11 @@ fn handle_transcription_ok(
     }
 
     Some(processed_text.len())
+}
+
+/// Raw-first paste only when the cold-start heuristic fires AND Ollama has not loaded the model.
+fn cold_start_pastes_raw(stale_success: bool, model_loaded: bool) -> bool {
+    stale_success && !model_loaded
 }
 
 fn ai_refinement_capability_enabled(settings: &Settings) -> bool {
@@ -2004,7 +2012,11 @@ pub(crate) fn maybe_spawn_ai_refinement(
             }
 
             match refinement_result {
-                Ok(result) => {
+                Ok(mut result) => {
+                    result.text = crate::postprocessing::apply_post_refinement_rules(
+                        &result.text,
+                        &settings_snapshot,
+                    );
                     if diagnostics_enabled {
                         info!(
                             "[refinement:{}] inference finished trigger={} source={} provider={} model={} elapsed_ms={} input_bytes={} output_bytes={} tokens_in={} tokens_out={}",
@@ -3540,12 +3552,20 @@ pub(crate) fn handle_toggle_async(app: AppHandle) {
 #[cfg(test)]
 mod refinement_defer_policy_tests {
     use super::{
-        is_ollama_model_not_found_message, is_refinement_success_stale,
+        cold_start_pastes_raw, is_ollama_model_not_found_message, is_refinement_success_stale,
         should_defer_paste_for_refinement_inner, REFINEMENT_COLD_PASTE_MAX_AGE_MS,
     };
     use crate::state::Settings;
 
     const NOW_MS: u64 = 10_000_000;
+
+    #[test]
+    fn loaded_model_is_never_a_cold_start_even_without_a_recent_success() {
+        // App restart with Ollama still holding the model: refine inline, paste the refined text.
+        assert!(!cold_start_pastes_raw(true, true));
+        assert!(cold_start_pastes_raw(true, false));
+        assert!(!cold_start_pastes_raw(false, false));
+    }
 
     #[test]
     fn no_success_yet_is_stale() {

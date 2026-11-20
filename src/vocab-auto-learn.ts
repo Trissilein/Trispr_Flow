@@ -133,6 +133,22 @@ function isUselessToken(t: string): boolean {
 }
 
 /**
+ * Hyphenated compounds with the same number of parts are compared part by part, so
+ * WhatsApp-Tickets -> WhatsUp-Tickets teaches WhatsApp -> WhatsUp and counts together with
+ * every other occurrence of the bare word. Anything else stays one pair.
+ */
+function splitCompound(from: string, to: string): SubstitutionPair[] {
+  const fromParts = from.split("-");
+  const toParts = to.split("-");
+  if (fromParts.length < 2 || fromParts.length !== toParts.length) return [{ from, to }];
+  const pairs: SubstitutionPair[] = [];
+  fromParts.forEach((part, idx) => {
+    if (part !== toParts[idx]) pairs.push({ from: part, to: toParts[idx] });
+  });
+  return pairs;
+}
+
+/**
  * Compute substitution pairs between pasted and submitted.
  *
  * 1. Tokenize both strings.
@@ -167,7 +183,10 @@ export function wordDiff(pasted: string, submitted: string): SubstitutionPair[] 
 
   const lcs = dp[m][n];
   const changed = m + n - 2 * lcs;
-  if (changed > (m + n) * 0.5) return [];
+  // A one-word dictation replaced by one word always looks like a rewrite;
+  // classifyCorrection's similarity gate decides whether the pair is a mishearing.
+  const singleWordSwap = m === 1 && n === 1;
+  if (!singleWordSwap && changed > (m + n) * 0.5) return [];
 
   // Backtrack to produce the edit script.
   type Op = { type: "equal" | "delete" | "insert"; token: string };
@@ -219,8 +238,10 @@ export function wordDiff(pasted: string, submitted: string): SubstitutionPair[] 
       const from = stripEdgePunct(rawFrom);
       const to = stripEdgePunct(rawTo);
       if (from === to) continue;
-      if (isUselessToken(from) || isUselessToken(to)) continue;
-      pairs.push({ from, to });
+      for (const pair of splitCompound(from, to)) {
+        if (isUselessToken(pair.from) || isUselessToken(pair.to)) continue;
+        pairs.push(pair);
+      }
     }
   }
   return pairs;
@@ -299,8 +320,30 @@ function isAllFunctionWords(text: string): boolean {
     .every((word) => FUNCTION_WORDS.has(word));
 }
 
+/** Typographic quotes/dashes folded to ASCII: editors and chat apps swap them silently. */
+function normalizeTypography(text: string): string {
+  return text
+    .replace(/[‘’‛ʼ`´]/g, "'")
+    .replace(/[“”„]/g, '"')
+    .replace(/[‐‑‒–—]/g, "-");
+}
+
+/** Common German/English inflection endings (plural, verb forms). `t` is left out: Godo -> Godot. */
+const INFLECTION_SUFFIXES = new Set(["s", "es", "e", "en", "n", "er", "ern", "ed", "d", "ing", "ung", "st"]);
+
+/** Build -> Builds, perfects -> perfect: a grammar edit, never a mishearing. */
+function isInflection(from: string, to: string): boolean {
+  const a = from.toLowerCase();
+  const b = to.toLowerCase();
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= 3 && long.startsWith(short) && INFLECTION_SUFFIXES.has(long.slice(short.length));
+}
+
 export function classifyCorrection(from: string, to: string): CorrectionKind {
   if (isAllFunctionWords(from) || isAllFunctionWords(to)) return "reject";
+  if (isInflection(from, to)) return "reject";
+  // Don't -> Don’t is a typography swap by the app, not a mishearing: never learn it.
+  if (from !== to && normalizeTypography(from) === normalizeTypography(to)) return "reject";
 
   const a = foldForCompare(from);
   const b = foldForCompare(to);
@@ -325,6 +368,20 @@ export function classifyCorrection(from: string, to: string): CorrectionKind {
  * those are not ordinary words. A plain capitalized `from` (Code, Gamma) may
  * be a common word whose lowercase form must keep working.
  */
+/**
+ * A learned pair (seen in 2 separate edits) becomes a find-replace rule that runs BEFORE the
+ * refinement, so the LLM already gets the right term. `hint` pairs qualify too once confirmed
+ * (Vauravox -> Wowravox, 0.375): the LLM ignores correction lists. Short words stay hints
+ * (Zug -> Zeug), casing-only pairs too (a rule would recase every common word).
+ */
+function becomesRule(from: string, to: string): boolean {
+  const kind = classifyCorrection(from, to);
+  if (kind === "rule") return true;
+  if (kind !== "hint") return false;
+  const length = Math.max(Array.from(foldForCompare(from)).length, Array.from(foldForCompare(to)).length);
+  return length >= RULE_MIN_LENGTH;
+}
+
 function needsLowercaseRule(from: string): boolean {
   return from !== from.toLowerCase() && /[\p{Lu}\p{N}]/u.test(from.slice(1));
 }
@@ -451,7 +508,7 @@ function applyPromotions(pairs: Array<[string, string]>, enableRules: boolean): 
   const hasRule = (key: string) => Object.prototype.hasOwnProperty.call(vocab, key);
 
   for (const [from, to] of pairs) {
-    if (classifyCorrection(from, to) === "rule") {
+    if (becomesRule(from, to)) {
       // A rule that already maps this word elsewhere belongs to the user: keep it.
       if (!hasRule(from)) vocab[from] = to;
       const lowered = from.toLowerCase();

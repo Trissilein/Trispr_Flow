@@ -417,7 +417,7 @@ pub fn prompt_for_profile(
             ));
         }
         // Custom prompts are user-owned and returned unchanged here. `prepare_refinement` still
-        // appends the learned-vocabulary hint afterwards (the prompt itself stays the prefix).
+        // puts the learned-vocabulary hint in front (the prompt itself stays unchanged).
         return Some(normalized.to_string());
     }
 

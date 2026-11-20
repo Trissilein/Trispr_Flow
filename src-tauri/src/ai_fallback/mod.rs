@@ -136,18 +136,18 @@ pub(crate) struct RefinementSetup {
     pub options: RefinementOptions,
 }
 
-/// Append the learned vocabulary (known corrections "heard -> intended" and terms to keep
-/// verbatim, see `vocab_hints::refinement_suffix`) to the refinement system prompt. This stops the
-/// LLM from mangling user-specific proper nouns ("MemPalace" -> "Mem Palace") and lets it repeat
-/// corrections the user made before. Also appended to a user-owned custom prompt, which stays
-/// the unchanged prefix. Returns `base` untouched when nothing is learned.
+/// Put the learned vocabulary (known corrections "heard -> intended" and terms to keep verbatim,
+/// see `vocab_hints::refinement_suffix`) IN FRONT of the refinement system prompt. Appended after
+/// a prompt that ends with an example, gemma4:e2b ignored it (0/3); in front it applied
+/// Vauravox -> Wowravox. A user-owned custom prompt follows unchanged. Returns `base` untouched
+/// when nothing is learned.
 fn augment_prompt_with_vocab(base: Option<String>, settings: &Settings) -> Option<String> {
     let Some(suffix) = crate::vocab_hints::refinement_suffix(settings) else {
         return base;
     };
     match base {
         Some(base_prompt) if !base_prompt.trim().is_empty() => {
-            Some(format!("{}\n\n{}", base_prompt, suffix))
+            Some(format!("{}\n\n{}", suffix, base_prompt))
         }
         _ => Some(suffix),
     }
@@ -453,17 +453,15 @@ mod vocab_prompt_tests {
     }
 
     #[test]
-    fn custom_prompt_stays_the_unchanged_prefix_and_gets_the_vocab_appended() {
+    fn vocab_goes_in_front_and_the_custom_prompt_follows_unchanged() {
         // prompt_for_profile returns a user-owned custom prompt unchanged; the vocabulary hint
-        // is appended afterwards (provider.rs documents this split).
+        // is put in front of it (provider.rs documents this split).
         let custom = "Rewrite as a pirate.";
         let prompt = augment_prompt_with_vocab(Some(custom.to_string()), &learned_settings())
             .expect("prompt");
-        assert!(prompt.starts_with(&format!(
-            "{custom}\n\nKnown corrections (heard -> intended)"
-        )));
+        assert!(prompt.starts_with("Known corrections (heard -> intended)"));
         assert!(prompt.contains("Trispa -> Trispr."));
-        assert!(prompt.ends_with("normalize them: Ollama"));
+        assert!(prompt.ends_with(&format!("normalize them: Ollama\n\n{custom}")));
     }
 
     #[test]
